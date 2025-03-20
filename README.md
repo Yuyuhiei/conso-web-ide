@@ -1,70 +1,205 @@
-# Getting Started with Create React App
+# Conso Web IDE
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A web-based IDE for the Conso programming language with real-time lexical, syntax, and semantic analysis.
 
-## Available Scripts
+## Project Overview
 
-In the project directory, you can run:
+This project provides a modern web-based development environment for the Conso programming language, featuring:
 
-### `npm start`
+- Monaco Editor with custom syntax highlighting for Conso
+- Real-time lexical analysis with token visualization
+- Syntax validation with immediate feedback
+- Semantic analysis capabilities
+- File saving and loading functionality
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## Setup Instructions
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+### Prerequisites
 
-### `npm test`
+- Node.js 14+ and npm
+- Python 3.7+
+- Your existing Conso language implementation files
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+### Backend Setup
 
-### `npm run build`
+1. Create a Python virtual environment:
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+```bash
+# Navigate to server directory
+cd server
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+# Create virtual environment
+python -m venv venv
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+# Activate the virtual environment
+# Windows
+venv\Scripts\activate
+# macOS/Linux
+source venv/bin/activate
+```
 
-### `npm run eject`
+2. Install the required Python packages:
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+```bash
+pip install fastapi uvicorn websockets python-multipart
+```
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+3. Make sure you have the following Conso language files in your server directory:
+   - lexer.py
+   - parser.py
+   - definitions.py
+   - semantic.py
+   - server.py (the new FastAPI server)
+   - websocket_server.py (the new WebSocket server)
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+4. Start the REST API server:
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+```bash
+# From the server directory
+uvicorn server:app --reload --port 5000
+```
 
-## Learn More
+5. Start the WebSocket server (in a new terminal window):
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+```bash
+# From the server directory with venv activated
+uvicorn websocket_server:app --reload --port 5001
+```
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+### Frontend Setup
 
-### Code Splitting
+Make sure your React project is set up with the required services and components:
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+1. Place the API and WebSocket service files in your `src/services` directory:
+   - api.js
+   - websocketService.js
 
-### Analyzing the Bundle Size
+2. Place the Conso language configuration file in your `src/utils` directory:
+   - consoLanguageConfig.js
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+3. Start your React development server:
 
-### Making a Progressive Web App
+```bash
+# From the project root
+npm start
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+## Usage
 
-### Advanced Configuration
+1. The IDE will automatically connect to the backend services on startup
+2. Type or load Conso code in the editor
+3. Real-time lexical and syntax analysis will appear in the token table and terminal
+4. Click "Semantic Analysis" to perform a semantic analysis when syntax is valid
+5. Use the Save/Load buttons to manage your Conso files
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+## Project Structure
 
-### Deployment
+```
+conso-web-ide/               # Root project folder
+├── src/                     # React frontend
+│   ├── components/          # React components
+│   │   ├── Editor.js        # Monaco editor component
+│   │   ├── Terminal.js      # Output/error display
+│   │   └── TokenTable.js    # Lexical analysis display
+│   ├── services/            # Backend communication
+│   │   ├── api.js           # REST API client
+│   │   └── websocketService.js # WebSocket client
+│   ├── utils/               # Utilities
+│   │   └── consoLanguageConfig.js # Monaco editor language config
+│   └── App.js               # Main application component
+├── server/                  # Python backend
+│   ├── lexer.py             # Conso lexer
+│   ├── parser.py            # Conso parser
+│   ├── definitions.py       # Shared definitions
+│   ├── semantic.py          # Semantic analyzer 
+│   ├── server.py            # FastAPI REST server
+│   └── websocket_server.py  # WebSocket server
+└── README.md                # This file
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+## Troubleshooting
 
-### `npm run build` fails to minify
+- **WebSocket Connection Issues**: Ensure both the API server (port 5000) and WebSocket server (port 5001) are running
+- **CORS Errors**: If you encounter CORS issues, verify the CORS middleware in the server.py file is properly configured
+- **Module Import Errors**: Make sure all Python files are in the correct server directory and the virtual environment is activated
+- **Token Parsing Issues**: If you encounter issues with the parser not receiving the correct tokens, check that the global token list in definitions.py is being properly updated
+- **Monaco Editor Not Loading**: Ensure the Monaco Editor is properly installed with `npm install @monaco-editor/react`
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+## Working with the Conso Language
+
+### Basic Syntax
+
+The Conso language has the following basic elements:
+
+```
+# Variable declarations
+nt myNumber = 5;
+dbl myDecimal = 3.14;
+strng myString = "Hello Conso";
+bln myBoolean = tr;
+chr myChar = 'A';
+
+# Control structures
+f (myBoolean) {
+    prnt("Condition is true");
+}
+
+fr (nt i = 0; i < 10; i++) {
+    prnt(i);
+}
+
+# Functions
+fnctn vd greet() {
+    prnt("Hello World");
+}
+
+# Main function
+mn() {
+    greet();
+}
+```
+
+### Code Examples
+
+The IDE allows you to write and test Conso code with real-time feedback. Here are some examples to try:
+
+1. **Hello World**:
+```
+mn() {
+    prnt("Hello, Conso!");
+}
+```
+
+2. **Fibonacci Sequence**:
+```
+fnctn nt fibonacci(nt n) {
+    f (n <= 1) {
+        rtrn n;
+    }
+    rtrn fibonacci(n-1) + fibonacci(n-2);
+}
+
+mn() {
+    fr (nt i = 0; i < 10; i++) {
+        prnt(fibonacci(i));
+    }
+}
+```
+
+## Extending the IDE
+
+You can extend this web IDE with additional features:
+
+1. **Debugging Tools**: Add breakpoints, step execution, and variable inspection
+2. **Project Management**: Implement multi-file projects and directory structure
+3. **Code Formatting**: Add automatic code formatting for Conso
+4. **Theming**: Implement light/dark themes and customizable editor options
+5. **Code Export**: Add options to export code to different formats
+
+## Contributing
+
+Contributions to the Conso Web IDE are welcome! Please feel free to submit issues or pull requests.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

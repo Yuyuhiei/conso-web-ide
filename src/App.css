@@ -1,38 +1,166 @@
-.App {
-  text-align: center;
-}
-
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
-
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
+/* Main app styling */
+.app-container {
   display: flex;
   flex-direction: column;
+  height: 100vh;
+  font-family: 'Calibri', Arial, sans-serif;
+  background-color: #252526;
+  color: #d4d4d4;
+}
+
+/* Header styling */
+.app-header {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
+  background-color: #333333;
+  padding: 10px 20px;
+  border-bottom: 1px solid #414141;
+}
+
+.app-title {
+  font-size: 24px;
+  font-weight: bold;
   color: white;
 }
 
-.App-link {
-  color: #61dafb;
+.app-controls {
+  display: flex;
+  gap: 10px;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.app-controls button {
+  background-color: #649ad1;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.app-controls button:hover {
+  background-color: #5a8ac0;
+}
+
+.app-controls button:disabled {
+  background-color: #555555;
+  cursor: not-allowed;
+}
+
+/* Main content */
+.main-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.editor-terminal-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.filename-display {
+  background-color: #649ad1;
+  color: white;
+  padding: 5px 10px;
+  font-size: 14px;
+}
+
+.editor-section {
+  flex: 2;
+  overflow: hidden;
+  border: 1px solid #414141;
+}
+
+.terminal-section {
+  flex: 1;
+  overflow: hidden;
+  border: 1px solid #414141;
+  display: flex;
+  flex-direction: column;
+}
+
+.token-table-section {
+  width: 300px;
+  overflow: auto;
+  border-left: 1px solid #414141;
+}
+
+/* Terminal styling */
+.terminal-header {
+  background-color: #649ad1;
+  color: white;
+  padding: 5px 10px;
+  font-size: 14px;
+}
+
+.terminal-content {
+  flex: 1;
+  padding: 10px;
+  overflow-y: auto;
+  background-color: #1e1e1e;
+}
+
+.error-message {
+  color: #f48771;
+}
+
+.success-message {
+  color: #89d185;
+}
+
+.warning-message {
+  color: #cca700;
+}
+
+/* Token table styling */
+.token-table-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.token-table-header {
+  background-color: #649ad1;
+  color: white;
+  padding: 5px 10px;
+  font-size: 14px;
+}
+
+.token-table-content {
+  padding: 10px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.token-table-content table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.token-table-content th {
+  background-color: #333333;
+  text-align: center;
+  padding: 8px 12px;
+}
+
+.token-table-content td {
+  padding: 6px 12px;
+  text-align: center;
+  border-bottom: 1px solid #414141;
+}
+
+.token-table-empty {
+  padding: 20px;
+  text-align: center;
+  color: #999999;
+}
+
+/* Editor customizations */
+.editor-container {
+  width: 100%;
+  height: 100%;
 }
