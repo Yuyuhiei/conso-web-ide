@@ -88,7 +88,7 @@ const Terminal = ({ output, codeChanged }) => {
     const newCategoryMessages = {
       lexical: null,
       syntax: null,
-      semantic: null
+      semantic: codeChanged ? null : categoryMessages.semantic // If code has changed, clear semantic message
     };
     
     lines.forEach(line => {
@@ -103,14 +103,15 @@ const Terminal = ({ output, codeChanged }) => {
         newCategoryMessages.syntax = line;
       }
       // Semantic Analysis messages
-      else if (line.includes('Semantic')) {
+      else if (line.includes('Semantic') && !codeChanged) {
+        // Only update semantic message if code hasn't changed
         newCategoryMessages.semantic = line;
       }
     });
     
     setCategoryMessages(newCategoryMessages);
-  }, [output]);
-  
+  }, [output, categoryMessages.semantic, codeChanged]);
+
   // Get line type based on content to apply appropriate styling
   const getLineType = (line) => {
     if (!line) return 'info';
