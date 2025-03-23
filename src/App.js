@@ -96,13 +96,43 @@ const App = () => {
   };
 
   // Handle file save
-  const handleSave = () => {
-    const blob = new Blob([code], { type: 'text/plain' });
-    const link = document.createElement('a');
-    link.download = fileName;
-    link.href = window.URL.createObjectURL(blob);
-    link.click();
-    setOutput(prev => `${prev}\nFile saved: ${fileName}`);
+  const handleSave = async () => {
+    try {
+      // Use showSaveFilePicker API
+      const handle = await window.showSaveFilePicker({
+        suggestedName: fileName,
+        types: [{
+          description: 'Conso Files',
+          accept: {
+            'text/plain': ['.cns'],
+          },
+        }],
+      });
+      
+      // Create a FileSystemWritableFileStream to write to
+      const writable = await handle.createWritable();
+      
+      // Write the contents
+      await writable.write(code);
+      await writable.close();
+      
+      // Update the filename if it changed
+      setFileName(handle.name);
+      setOutput(prev => `${prev}\nFile saved: ${handle.name}`);
+    } catch (err) {
+      // User cancelled or API not supported
+      if (err.name !== 'AbortError') {
+        setOutput(prev => `${prev}\nError saving file: ${err.message}`);
+        
+        // Fallback to browser download if File System API is not supported
+        const blob = new Blob([code], { type: 'text/plain' });
+        const link = document.createElement('a');
+        link.download = fileName;
+        link.href = window.URL.createObjectURL(blob);
+        link.click();
+        setOutput(prev => `${prev}\nFile saved to downloads: ${fileName}`);
+      }
+    }
   };
 
   // Handle file open
@@ -135,13 +165,21 @@ const App = () => {
   return (
     <div className="app-container" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <header className="app-header">
-        <div className="app-title">Conso Web IDE</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          <img 
+            src="/assets/revamped_cnslogo.svg" 
+            alt="Conso Logo" 
+            style={{ height: '45px', width: 'auto' }} /* Increased logo size */
+          />
+          <div className="app-title">Conso Web IDE</div>
+        </div>
         <div className="file-name-container">
           <input 
             type="text" 
             value={fileName} 
             onChange={handleFileNameChange} 
             className="file-name-input"
+            style={{ padding: '10px 14px' }} /* Adjusted input size */
           />
         </div>
         <div className="app-controls">
@@ -159,11 +197,16 @@ const App = () => {
           <button 
             onClick={runSemanticAnalysis} 
             disabled={!semanticEnabled}
-            className={!semanticEnabled ? "disabled-button" : ""}
+            className={`semantic-button ${!semanticEnabled ? "disabled-button" : ""}`}
           >
             Semantic Analysis
           </button>
-          <button onClick={clearTerminal}>Clear Terminal</button>
+          <button 
+            onClick={clearTerminal}
+            className="clear-button"
+          >
+            Clear Terminal
+          </button>
         </div>
       </header>
       
@@ -201,3 +244,7 @@ const App = () => {
 };
 
 export default App;
+
+
+
+

@@ -6,14 +6,18 @@ export const configureConsoLanguage = (monaco) => {
 
   // Define the token provider (syntax highlighting)
   monaco.languages.setMonarchTokensProvider('conso', {
-    // Set defaultToken to invalid to see what you do not tokenize yet
-    defaultToken: 'invalid',
+    // Set defaultToken to a neutral color instead of invalid
+    defaultToken: 'text',
 
     keywords: [
       'npt', 'prnt', 'nt', 'dbl', 'strng', 'bln', 'chr', 
       'f', 'ls', 'lsf', 'swtch', 'fr', 'whl', 'd', 'mn', 'cs', 
       'dflt', 'brk', 'cnst', 'tr', 'fls', 'fnctn', 'rtrn', 'nll',
       'end', 'cntn', 'strct', 'dfstrct', 'vd'
+    ],
+
+    typeKeywords: [
+      'nt', 'dbl', 'strng', 'bln', 'chr', 'vd'
     ],
 
     operators: [
@@ -33,10 +37,11 @@ export const configureConsoLanguage = (monaco) => {
     // The main tokenizer for our languages
     tokenizer: {
       root: [
-        // identifiers and keywords
-        [/[a-z_$][\w$]*/, {
+        // identifiers and keywords - handling both lowercase and uppercase identifiers
+        [/[a-zA-Z_$][\w$]*/, {
           cases: {
             '@keywords': 'keyword',
+            '@typeKeywords': 'type',
             '@default': 'identifier'
           }
         }],
@@ -44,9 +49,13 @@ export const configureConsoLanguage = (monaco) => {
         // whitespace
         { include: '@whitespace' },
 
+        // semicolons - make them white like normal text
+        [/;/, 'delimiter.semicolon'],
+        
         // delimiters and operators
-        [/[{}()\[\]]/, '@brackets'],
-        [/[<>](?!@symbols)/, '@brackets'],
+        [/[{}()\[\]]/, 'delimiter'],
+        [/[<>](?!@symbols)/, 'delimiter'],
+        [/[,.]/, 'delimiter'],
         [/@symbols/, {
           cases: {
             '@operators': 'operator',
@@ -117,6 +126,20 @@ export const configureConsoLanguage = (monaco) => {
       { open: "'", close: "'" },
     ],
   });
+
+  // Apply custom styling to the editor
+  monaco.editor.defineTheme('conso-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'delimiter.semicolon', foreground: 'D4D4D4' }, // White semicolons
+      { token: 'identifier', foreground: 'D4D4D4' }           // White identifiers including functions
+    ],
+    colors: {}
+  });
+
+  // Set the theme
+  monaco.editor.setTheme('conso-dark');
 
   // Add basic completions for Conso keywords
   monaco.languages.registerCompletionItemProvider('conso', {

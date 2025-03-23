@@ -101,7 +101,9 @@ const TokenTable = ({ tokens }) => {
           flexGrow: 1,
           overflowY: 'auto',
           position: 'relative',
-          paddingLeft: '10px'
+          paddingLeft: '10px',
+          scrollbarWidth: 'thin', // For Firefox
+          scrollbarColor: '#649ad1 #1e1e1e', // For Firefox
         }}
       >
         {!tokens || tokens.length === 0 ? (
@@ -186,6 +188,25 @@ const TokenTable = ({ tokens }) => {
             @keyframes blink {
               0%, 100% { opacity: 0; }
               50% { opacity: 0.7; }
+            }
+            
+            /* Webkit (Chrome, Safari, Edge) scrollbar styles */
+            .token-table-content::-webkit-scrollbar {
+              width: 8px;
+            }
+
+            .token-table-content::-webkit-scrollbar-track {
+              background: #1e1e1e;
+              border-radius: 4px;
+            }
+
+            .token-table-content::-webkit-scrollbar-thumb {
+              background: #649ad1;
+              border-radius: 4px;
+            }
+
+            .token-table-content::-webkit-scrollbar-thumb:hover {
+              background: #5a8ac0;
             }
           `}
         </style>
