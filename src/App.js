@@ -13,6 +13,7 @@ const App = () => {
   const [tokens, setTokens] = useState([]);
   const [semanticEnabled, setSemanticEnabled] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [codeChanged, setCodeChanged] = useState(false);
   
   // Connect to WebSocket when the component mounts
   useEffect(() => {
@@ -61,6 +62,7 @@ const App = () => {
   // Function for real-time analysis
   const handleCodeChange = (newValue) => {
     setCode(newValue);
+    setCodeChanged(true); // Mark that code has changed to clear semantic analysis messages
     
     // Only run the analyzer if we're not already analyzing
     // This prevents too many requests
@@ -79,6 +81,7 @@ const App = () => {
   // Run semantic analysis
   const runSemanticAnalysis = async () => {
     try {
+      setCodeChanged(false); // Reset the code changed flag when running semantic analysis
       setOutput(prev => `${prev}\nRunning semantic analysis...`);
       const response = await analyzeSemantics(code);
       
@@ -130,7 +133,7 @@ const App = () => {
   };
 
   return (
-    <div className="app-container">
+    <div className="app-container" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <header className="app-header">
         <div className="app-title">Conso Web IDE</div>
         <div className="file-name-container">
@@ -164,27 +167,37 @@ const App = () => {
         </div>
       </header>
       
-      <div className="main-content">
-        <div className="editor-terminal-container">
-          <div className="editor-section">
-            <CodeEditor 
-              value={code} 
-              onChange={handleCodeChange} 
-              onSave={handleSave} 
-            />
-          </div>
-          <div className="terminal-section">
-            <Terminal output={output} />
-          </div>
-        </div>
-        
-        <div className="token-table-section">
+      <div className="main-content" style={{ 
+        position: 'relative', 
+        flex: 1, 
+        display: 'flex', 
+        flexDirection: 'column',
+        overflow: 'hidden'
+      }}>
+        {/* Editor container */}
+        <div className="editor-container" style={{ 
+          position: 'relative', 
+          flex: 1, 
+          overflow: 'hidden' 
+        }}>
+          <CodeEditor 
+            value={code} 
+            onChange={handleCodeChange} 
+            onSave={handleSave} 
+          />
+          
+          {/* Token Table on the right side - this component positions itself */}
           <TokenTable tokens={tokens} />
         </div>
+        
+        {/* Terminal at the bottom */}
+        <Terminal 
+          output={output} 
+          codeChanged={codeChanged} 
+        />
       </div>
     </div>
   );
 };
 
 export default App;
-

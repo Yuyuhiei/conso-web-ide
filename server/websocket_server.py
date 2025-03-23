@@ -1,12 +1,11 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from typing import List, Dict, Any
+from typing import List
 import json
-import asyncio
-import copy
+import re
 
 # Import your existing modules
 from lexer import Lexer
-from parser import parse
+from parser import parse, ParserError
 import definitions
 
 # Class to manage WebSocket connections
@@ -33,77 +32,51 @@ class ConnectionManager:
 app = FastAPI()
 manager = ConnectionManager()
 
+def normalize_code(code: str) -> str:
+    """
+    Normalize code to handle newlines and indentation in a way that
+    satisfies the lexer's delimiter requirements
+    """
+    # Handle specific case where opening brace is followed by newline and indentation
+    # Replace "{\n    " with "{ "
+    code = re.sub(r'{\s*\n\s+', '{ ', code)
+    
+    # Remove spaces between mn and (
+    code = re.sub(r'mn\s+\(', 'mn(', code)
+    
+    # Remove extra whitespace at end of lines
+    code = re.sub(r'\s+\n', '\n', code)
+    
+    # Ensure consistent line endings
+    code = code.replace('\r\n', '\n')
+    
+    return code
+
+# WebSocket connection handler
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     
     try:
         while True:
+            # Receive message from client
             data = await websocket.receive_text()
             
-            # Parse the received data
+            # Process received data
             try:
                 request_data = json.loads(data)
                 code = request_data.get("code", "")
                 
-                # If there's code to analyze, perform lexical and syntax analysis
-                if code:
-                    # Run the lexer
-                    lexer = Lexer(code)
-                    tokens, lexer_errors = lexer.make_tokens()
-                    
-                    # Convert tokens to a format that can be JSON serialized
-                    serialized_tokens = [
-                        {
-                            "value": token.value if token.value is not None else "",
-                            "type": token.type,
-                            "line": token.line,
-                            "column": token.column
-                        } for token in tokens
-                    ]
-                    
-                    # Prepare lexer response
-                    lexer_response = {
-                        "type": "lexer_result",
-                        "tokens": serialized_tokens,
-                        "success": len(lexer_errors) == 0,
-                        "errors": [str(err) for err in lexer_errors]
-                    }
-                    
-                    # Send lexer results
-                    await manager.send_personal_message(json.dumps(lexer_response), websocket)
-                    
-                    # If no lexer errors, run the parser
-                    if not lexer_errors:
-                        try:
-                            # Clear the global token list
-                            definitions.token.clear()
-                            
-                            # Fill the global token list with the new tokens
-                            for token in tokens:
-                                definitions.token.append((token.type, token.line, token.column))
-                            
-                            # Run parser using existing parse function
-                            result, error_messages, syntax_valid = parse()
-                            
-                            # Prepare parser response
-                            parser_response = {
-                                "type": "parser_result",
-                                "success": syntax_valid,
-                                "errors": error_messages if error_messages else [],
-                                "syntaxValid": syntax_valid
-                            }
-                            
-                            # Send parser results
-                            await manager.send_personal_message(json.dumps(parser_response), websocket)
-                        except Exception as e:
-                            parser_error = {
-                                "type": "parser_result",
-                                "success": False,
-                                "errors": [f"Parser error: {str(e)}"],
-                                "syntaxValid": False
-                            }
-                            await manager.send_personal_message(json.dumps(parser_error), websocket)
+                # Skip empty code
+                if not code:
+                    continue
+                
+                # Normalize code and process
+                normalized_code = normalize_code(code)
+                print(f"WebSocket normalized code:\n{normalized_code}")
+                
+                await process_code(normalized_code, websocket)
+                
             except json.JSONDecodeError:
                 error_response = {
                     "type": "error",
@@ -111,6 +84,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 }
                 await manager.send_personal_message(json.dumps(error_response), websocket)
             except Exception as e:
+                print(f"Error processing request: {str(e)}")
                 error_response = {
                     "type": "error",
                     "message": f"Error processing request: {str(e)}"
@@ -122,6 +96,61 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"WebSocket error: {str(e)}")
         manager.disconnect(websocket)
+
+# Process code - just like the run_lexer and run_parser functions in your GUI
+async def process_code(code: str, websocket: WebSocket):
+    try:
+        # Clear previous tokens
+        definitions.token.clear()
+        
+        # Create a lexer instance with the provided code
+        lexer = Lexer(code)
+        tokens, errors = lexer.make_tokens()
+        
+        # Store tokens for parser use
+        for tok in tokens:
+            definitions.token.append((tok.type, tok.line, tok.column))
+        
+        # Convert tokens for frontend display
+        serialized_tokens = [
+            {
+                "value": tok.value if tok.value is not None else "",
+                "type": tok.type,
+                "line": tok.line,
+                "column": tok.column
+            } for tok in tokens
+        ]
+        
+        # Send lexer results
+        lexer_success = len(errors) == 0
+        lexer_response = {
+            "type": "lexer_result",
+            "tokens": serialized_tokens,
+            "success": lexer_success,
+            "errors": [str(err) for err in errors]
+        }
+        await manager.send_personal_message(json.dumps(lexer_response), websocket)
+        
+        # If lexer succeeded, run parser
+        if lexer_success:
+            result, error_messages, syntax_valid = parse()
+            
+            # Send parser results
+            parser_response = {
+                "type": "parser_result",
+                "success": syntax_valid,
+                "errors": error_messages if error_messages else [],
+                "syntaxValid": syntax_valid
+            }
+            await manager.send_personal_message(json.dumps(parser_response), websocket)
+            
+    except Exception as e:
+        print(f"Processing error: {str(e)}")
+        error_response = {
+            "type": "error",
+            "message": f"Processing error: {str(e)}"
+        }
+        await manager.send_personal_message(json.dumps(error_response), websocket)
 
 # Health check endpoint
 @app.get("/health")

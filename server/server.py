@@ -1,14 +1,14 @@
-from fastapi import FastAPI, HTTPException, Body, Request
+from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import uvicorn
-import sys
 import copy
+import re
 
 # Import your existing modules
-from lexer import Lexer, Token
-from parser import parse
+from lexer import Lexer
+from parser import parse, ParserError
 from semantic import SemanticAnalyzer
 import definitions
 
@@ -47,61 +47,99 @@ class SemanticResponse(BaseModel):
     success: bool
     errors: List[str]
 
+def normalize_code(code: str) -> str:
+    """
+    Normalize code to handle newlines and indentation in a way that
+    satisfies the lexer's delimiter requirements
+    """
+    # Handle specific case where opening brace is followed by newline and indentation
+    # Replace "{\n    " with "{ "
+    code = re.sub(r'{\s*\n\s+', '{ ', code)
+    
+    # Remove spaces between mn and (
+    code = re.sub(r'mn\s+\(', 'mn(', code)
+    
+    # Remove extra whitespace at end of lines
+    code = re.sub(r'\s+\n', '\n', code)
+    
+    # Ensure consistent line endings
+    code = code.replace('\r\n', '\n')
+    
+    return code
+
 # Lexical analysis endpoint
 @app.post("/api/lexer", response_model=LexerResponse)
 async def lexical_analysis(request: CodeRequest):
     try:
-        # Create a lexer instance with the provided code
-        lexer = Lexer(request.code)
-        tokens, errors = lexer.make_tokens()
-        
-        # Clear the global token list used by the parser
+        # Clear the existing tokens
         definitions.token.clear()
         
-        # Fill the global token list with the new tokens
-        for token in tokens:
-            definitions.token.append((token.type, token.line, token.column))
+        # Get the input code and normalize it
+        input_code = normalize_code(request.code)
+        
+        print(f"Normalized code:\n{input_code}")
+        
+        if not input_code:
+            return LexerResponse(
+                tokens=[],
+                success=False,
+                errors=["Empty input"]
+            )
+            
+        # Create a lexer instance with the provided code
+        lexer = Lexer(input_code)
+        tokens, errors = lexer.make_tokens()
+        
+        # Store tokens in global token list
+        for tok in tokens:
+            definitions.token.append((tok.type, tok.line, tok.column))
         
         # Convert tokens to response format
         token_responses = [
             TokenResponse(
-                value=token.value if token.value is not None else "",
-                type=token.type,
-                line=token.line,
-                column=token.column
-            ) for token in tokens
+                value=tok.value if tok.value is not None else "",
+                type=tok.type,
+                line=tok.line,
+                column=tok.column
+            ) for tok in tokens
         ]
         
-        # Return the response
+        # Return response
         return LexerResponse(
             tokens=token_responses,
             success=len(errors) == 0,
             errors=[str(err) for err in errors]
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Lexer error: {str(e)}")
+        print(f"Lexical Analysis Error: {str(e)}")
+        return LexerResponse(
+            tokens=[],
+            success=False,
+            errors=[f"Lexical Analysis Error: {str(e)}"]
+        )
 
 # Syntax analysis endpoint
 @app.post("/api/parser", response_model=ParserResponse)
 async def syntax_analysis(request: CodeRequest):
     try:
-        # First run lexer to get tokens
-        lexer = Lexer(request.code)
-        tokens, lexer_errors = lexer.make_tokens()
+        # Get normalized code
+        input_code = normalize_code(request.code)
         
-        if lexer_errors:
+        # First run lexer to get tokens
+        lexer = Lexer(input_code)
+        tokens, errors = lexer.make_tokens()
+        
+        if errors:
             return ParserResponse(
                 success=False,
-                errors=[str(err) for err in lexer_errors],
+                errors=[str(err) for err in errors],
                 syntaxValid=False
             )
         
-        # Clear the global token list
+        # Clear and populate the global token list
         definitions.token.clear()
-        
-        # Fill the global token list with the new tokens
-        for token in tokens:
-            definitions.token.append((token.type, token.line, token.column))
+        for tok in tokens:
+            definitions.token.append((tok.type, tok.line, tok.column))
         
         # Run parser using your existing parse function
         result, error_messages, syntax_valid = parse()
@@ -111,34 +149,49 @@ async def syntax_analysis(request: CodeRequest):
             errors=error_messages if error_messages else [],
             syntaxValid=syntax_valid
         )
+    except ParserError as e:
+        print(f"Parser Error: {str(e)}")
+        return ParserResponse(
+            success=False,
+            errors=[str(e)],
+            syntaxValid=False
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Parser error: {str(e)}")
+        print(f"Unexpected error: {str(e)}")
+        return ParserResponse(
+            success=False,
+            errors=[f"Syntax Analysis Error: {str(e)}"],
+            syntaxValid=False
+        )
 
 # Semantic analysis endpoint
 @app.post("/api/semantic", response_model=SemanticResponse)
 async def semantic_analysis(request: CodeRequest):
     try:
-        # First run lexer to get tokens
-        lexer = Lexer(request.code)
+        # Get normalized code
+        input_code = normalize_code(request.code)
+        
+        # Save the original tokens for later restoration
+        original_tokens = copy.deepcopy(definitions.token)
+        
+        # Run the lexer to get tokens
+        lexer = Lexer(input_code)
         tokens, lexer_errors = lexer.make_tokens()
         
         if lexer_errors:
             return SemanticResponse(
                 success=False,
-                errors=[str(err) for err in lexer_errors]
+                errors=[f"Lexical Error: {str(err)}" for err in lexer_errors]
             )
         
-        # Create semantic tokens in the format expected by your analyzer
-        semantic_tokens = [(token.type, token.value, token.line, token.column) for token in tokens]
+        # Create semantic tokens in the expected format
+        semantic_tokens = [(tok.type, tok.value, tok.line, tok.column) for tok in tokens]
         
-        # Save a copy of the current token list for parser
-        original_tokens = copy.deepcopy(definitions.token)
-        
-        # Run semantic analysis
+        # Create analyzer instance and run analysis
         analyzer = SemanticAnalyzer()
         success, errors = analyzer.analyze(semantic_tokens)
         
-        # Restore the original tokens for other operations
+        # Restore the original tokens
         definitions.token.clear()
         definitions.token.extend(original_tokens)
         
@@ -147,7 +200,11 @@ async def semantic_analysis(request: CodeRequest):
             errors=errors
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Semantic analysis error: {str(e)}")
+        print(f"Semantic Analysis Error: {str(e)}")
+        return SemanticResponse(
+            success=False,
+            errors=[f"Semantic Analysis Error: {str(e)}"]
+        )
 
 # Health check endpoint
 @app.get("/api/health")
