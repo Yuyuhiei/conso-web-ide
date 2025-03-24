@@ -127,19 +127,8 @@ export const configureConsoLanguage = (monaco) => {
     ],
   });
 
-  // Apply custom styling to the editor
-  monaco.editor.defineTheme('conso-dark', {
-    base: 'vs-dark',
-    inherit: true,
-    rules: [
-      { token: 'delimiter.semicolon', foreground: 'D4D4D4' }, // White semicolons
-      { token: 'identifier', foreground: 'D4D4D4' }           // White identifiers including functions
-    ],
-    colors: {}
-  });
-
-  // Set the theme
-  monaco.editor.setTheme('conso-dark');
+  // Define themes
+  defineEditorThemes(monaco);
 
   // Add basic completions for Conso keywords
   monaco.languages.registerCompletionItemProvider('conso', {
@@ -199,5 +188,108 @@ export const configureConsoLanguage = (monaco) => {
     }
   });
 };
+
+// Define multiple editor themes
+function defineEditorThemes(monaco) {
+  // Default Dark Theme
+  monaco.editor.defineTheme('conso-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'delimiter.semicolon', foreground: 'D4D4D4' }, // White semicolons
+      { token: 'identifier', foreground: 'D4D4D4' },          // White identifiers
+      { token: 'type', foreground: '569CD6' },                // Blue for type keywords
+      { token: 'keyword', foreground: '569CD6' },             // Blue for other keywords
+      { token: 'number', foreground: 'B5CEA8' },              // Light green for numbers
+      { token: 'string', foreground: 'CE9178' },              // Orange-brown for strings
+      { token: 'comment', foreground: '6A9955' }              // Green for comments
+    ],
+    colors: {
+      'editor.background': '#1E1E1E',
+      'editor.foreground': '#D4D4D4',
+      'editorCursor.foreground': '#FFFFFF',
+      'editor.lineHighlightBackground': '#2D2D30',
+      'editorLineNumber.foreground': '#858585',
+      'editor.selectionBackground': '#264F78',
+      'editor.inactiveSelectionBackground': '#3A3D41',
+      'editorIndentGuide.background': '#404040'
+    }
+  });
+
+  // Light Theme
+  monaco.editor.defineTheme('conso-light', {
+    base: 'vs',
+    inherit: true,
+    rules: [
+      { token: 'delimiter.semicolon', foreground: '000000' }, // Black semicolons
+      { token: 'identifier', foreground: '000000' },          // Black identifiers
+      { token: 'type', foreground: '0000FF' },                // Blue for type keywords
+      { token: 'keyword', foreground: '0000FF' },             // Blue for other keywords
+      { token: 'number', foreground: '098658' },              // Green for numbers
+      { token: 'string', foreground: 'A31515' },              // Red for strings
+      { token: 'comment', foreground: '008000' }              // Green for comments
+    ],
+    colors: {
+      'editor.background': '#FFFFFF',
+      'editor.foreground': '#000000',
+      'editorCursor.foreground': '#000000',
+      'editor.lineHighlightBackground': '#F5F5F5',
+      'editorLineNumber.foreground': '#237893',
+      'editor.selectionBackground': '#ADD6FF',
+      'editor.inactiveSelectionBackground': '#E5EBF1',
+      'editorIndentGuide.background': '#D3D3D3'
+    }
+  });
+
+  // Monokai Theme
+  monaco.editor.defineTheme('conso-monokai', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'delimiter.semicolon', foreground: 'F8F8F2' }, // Light gray semicolons
+      { token: 'identifier', foreground: 'F8F8F2' },          // Light gray identifiers
+      { token: 'type', foreground: '66D9EF' },                // Light blue for type keywords
+      { token: 'keyword', foreground: 'F92672' },             // Pink for keywords
+      { token: 'number', foreground: 'AE81FF' },              // Purple for numbers
+      { token: 'string', foreground: 'E6DB74' },              // Yellow for strings
+      { token: 'comment', foreground: '75715E' }              // Gray for comments
+    ],
+    colors: {
+      'editor.background': '#272822',
+      'editor.foreground': '#F8F8F2',
+      'editorCursor.foreground': '#F8F8F2',
+      'editor.lineHighlightBackground': '#3E3D32',
+      'editorLineNumber.foreground': '#90908A',
+      'editor.selectionBackground': '#49483E',
+      'editor.inactiveSelectionBackground': '#40403A',
+      'editorIndentGuide.background': '#3B3A32'
+    }
+  });
+
+  // Dracula Theme
+  monaco.editor.defineTheme('conso-dracula', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [
+      { token: 'delimiter.semicolon', foreground: 'F8F8F2' }, // Light gray semicolons
+      { token: 'identifier', foreground: 'F8F8F2' },          // Light gray identifiers
+      { token: 'type', foreground: '8BE9FD' },                // Cyan for type keywords
+      { token: 'keyword', foreground: 'FF79C6' },             // Pink for keywords
+      { token: 'number', foreground: 'BD93F9' },              // Purple for numbers
+      { token: 'string', foreground: 'F1FA8C' },              // Yellow for strings
+      { token: 'comment', foreground: '6272A4' }              // Blue for comments
+    ],
+    colors: {
+      'editor.background': '#282A36',
+      'editor.foreground': '#F8F8F2',
+      'editorCursor.foreground': '#F8F8F2',
+      'editor.lineHighlightBackground': '#44475A',
+      'editorLineNumber.foreground': '#6272A4',
+      'editor.selectionBackground': '#44475A',
+      'editor.inactiveSelectionBackground': '#3A3D41',
+      'editorIndentGuide.background': '#424450'
+    }
+  });
+}
 
 export default configureConsoLanguage;

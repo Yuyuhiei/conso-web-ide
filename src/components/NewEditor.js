@@ -6,6 +6,7 @@ const CodeEditor = ({
   value, 
   onChange, 
   onSave,
+  theme = 'conso-dark'  // Add theme prop with default
 }) => {
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
@@ -45,6 +46,13 @@ const CodeEditor = ({
     }
   }, [value]);
   
+  // This effect updates the theme when it changes
+  useEffect(() => {
+    if (monacoRef.current) {
+      monacoRef.current.editor.setTheme(theme);
+    }
+  }, [theme]);
+  
   return (
     <div className="editor-container" style={{ height: "100%", width: "100%" }}>
       <Editor
@@ -54,7 +62,7 @@ const CodeEditor = ({
         defaultValue={value}
         onChange={onChange}
         onMount={handleEditorDidMount}
-        theme="vs-dark"
+        theme={theme}
         options={{
           selectOnLineNumbers: true,
           roundedSelection: false,
