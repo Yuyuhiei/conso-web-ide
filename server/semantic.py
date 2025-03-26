@@ -394,6 +394,12 @@ class SemanticAnalyzer:
                 self.analyze_return_statement(return_type, line, column)
                 continue
 
+            # Check for print statement
+            if token_type == 'prnt':
+                print("Found print statement in function body - calling analyze_print_statement()")  # Debug
+                self.analyze_print_statement()
+                continue
+
             # Handle conditional statements
             if token_type == 'f':
                 self.analyze_if_statement()
@@ -409,7 +415,7 @@ class SemanticAnalyzer:
                 self.analyze_for_loop()
                 continue
 
-                # Handle while loops
+            # Handle while loops
             if token_type == 'whl':
                 self.analyze_while_loop()
                 continue
@@ -1790,8 +1796,16 @@ class SemanticAnalyzer:
     
     def analyze_expression(self, end_pos):
         """Analyze an expression and determine its resulting type using strict type rules"""
+        # Add debug output
+        print(f"Analyzing expression from position {self.current_token_index} to {end_pos}")
+        
         # Save current position
         original_pos = self.current_token_index
+        
+        # Debug - show the tokens being analyzed
+        expr_tokens = self.token_stream[original_pos:end_pos]
+        expr_str = " ".join([f"{t[0]}('{t[1]}')" for t in expr_tokens])
+        print(f"Expression tokens: {expr_str}")
         
         # Check if this is a simple function call expression
         if (self.current_token_index < len(self.token_stream) and 
@@ -1830,12 +1844,17 @@ class SemanticAnalyzer:
                 self.current_token_index = original_pos
         
         # Regular expression parsing
-        return self._parse_expression(end_pos)[0]
+        result_type, has_relational = self._parse_expression(end_pos)
+        print(f"Expression result type: {result_type}, has relational: {has_relational}")
+        return result_type
     
     def _parse_expression(self, end_pos):
         """
         Parse an expression and return its type and if it contains relational operators.
         Returns a tuple (type, has_relational_op)
+        
+        UPDATED to allow arithmetic operations between nt and dbl types.
+        Result will be of type dbl when mixing types.
         """
         # For complex expressions, we need to track:
         # 1. The current operand type we're working with
@@ -1850,8 +1869,16 @@ class SemanticAnalyzer:
         # If this is a relational expression, the result is boolean
         contains_relational_op = False
         
+        # Debug output
+        print(f"Parsing expression from position {self.current_token_index} to {end_pos}")
+        # Print tokens being parsed
+        expr_tokens = self.token_stream[self.current_token_index:end_pos]
+        expr_str = " ".join([f"{t[0]}('{t[1]}')" for t in expr_tokens])
+        print(f"Expression tokens: {expr_str}")
+        
         while self.current_token_index < end_pos:
             token_type, token_value, line, column = self.get_current_token()
+            print(f"Processing token: {token_type} '{token_value}'")
             
             # Handle opening parenthesis - parse subexpression
             if token_type == '(':
@@ -1882,6 +1909,7 @@ class SemanticAnalyzer:
                 
                 # Recursively parse the subexpression
                 subexpr_type, subexpr_relational = self._parse_expression(subexpr_end)
+                print(f"Subexpression type: {subexpr_type}, relational: {subexpr_relational}")
                 
                 # Skip over the closing parenthesis
                 self.advance()
@@ -1890,22 +1918,25 @@ class SemanticAnalyzer:
                 if current_operator:
                     # Check compatibility with operator
                     if current_operator in self.arithmetic_operators:
-                        # Arithmetic operators require numeric operands
+                        # Arithmetic operators require numeric operands, but we now allow mixing nt and dbl
                         if current_type not in ['nt', 'dbl'] or subexpr_type not in ['nt', 'dbl']:
+                            print(f"ERROR: Cannot apply '{current_operator}' to '{current_type}' and '{subexpr_type}'")
                             raise SemanticError(
                                 f"Type mismatch: Cannot apply '{current_operator}' to '{current_type}' and '{subexpr_type}'",
                                 line, column
                             )
-                        if current_type != subexpr_type:
-                            raise SemanticError(
-                                f"Type mismatch: Conso requires identical types for arithmetic operations ('{current_type}' and '{subexpr_type}')",
-                                line, column
-                            )
-                        # Result is same type as operands
-                        current_type = subexpr_type
+                        
+                        # If we mix nt and dbl, the result is dbl
+                        if current_type == 'dbl' or subexpr_type == 'dbl':
+                            current_type = 'dbl'
+                        else:
+                            # Both are nt, result remains nt
+                            current_type = 'nt'
+                            
                     elif current_operator in self.logical_operators:
                         # Logical operators require boolean operands
                         if current_type != 'bln' or subexpr_type != 'bln':
+                            print(f"ERROR: Cannot apply '{current_operator}' to '{current_type}' and '{subexpr_type}'")
                             raise SemanticError(
                                 f"Type mismatch: Cannot apply '{current_operator}' to '{current_type}' and '{subexpr_type}'",
                                 line, column
@@ -1916,21 +1947,22 @@ class SemanticAnalyzer:
                         # Relational operators behavior depends on specific operator
                         if current_operator in self.equality_operators:
                             # == and != work for all types, but both operands must be same type
+                            # However, we'll allow comparing nt with dbl
                             if current_type != subexpr_type:
-                                raise SemanticError(
-                                    f"Type mismatch: Cannot compare '{current_type}' with '{subexpr_type}'",
-                                    line, column
-                                )
+                                # Allow comparing nt with dbl
+                                if not ((current_type == 'nt' and subexpr_type == 'dbl') or 
+                                    (current_type == 'dbl' and subexpr_type == 'nt')):
+                                    print(f"ERROR: Cannot compare '{current_type}' with '{subexpr_type}'")
+                                    raise SemanticError(
+                                        f"Type mismatch: Cannot compare '{current_type}' with '{subexpr_type}'",
+                                        line, column
+                                    )
                         else:
-                            # <, >, <=, >= only work for numeric types
+                            # <, >, <=, >= only work for numeric types - now allow mixing nt and dbl
                             if current_type not in ['nt', 'dbl'] or subexpr_type not in ['nt', 'dbl']:
+                                print(f"ERROR: Cannot apply '{current_operator}' to '{current_type}' and '{subexpr_type}'")
                                 raise SemanticError(
                                     f"Type mismatch: Cannot apply '{current_operator}' to '{current_type}' and '{subexpr_type}'",
-                                    line, column
-                                )
-                            if current_type != subexpr_type:
-                                raise SemanticError(
-                                    f"Type mismatch: Cannot compare '{current_type}' with '{subexpr_type}'",
                                     line, column
                                 )
                         
@@ -1940,6 +1972,7 @@ class SemanticAnalyzer:
                     elif current_operator in self.string_concat_operator:
                         # String concatenation requires string operands
                         if current_type != 'strng' or subexpr_type != 'strng':
+                            print(f"ERROR: Cannot concatenate '{current_type}' with '{subexpr_type}'")
                             raise SemanticError(
                                 f"Type mismatch: Cannot concatenate '{current_type}' with '{subexpr_type}'",
                                 line, column
@@ -1999,6 +2032,7 @@ class SemanticAnalyzer:
                                 raise SemanticError(f"Undefined variable '{var_name}'", line, column)
                             
                             if symbol.data_type != 'nt':
+                                print(f"ERROR: Increment/decrement only applies to 'nt' variables, not '{symbol.data_type}'")
                                 raise SemanticError(f"Increment/decrement operators can only be applied to 'nt' variables, not '{symbol.data_type}'", 
                                                 line, column)
                             
@@ -2016,6 +2050,7 @@ class SemanticAnalyzer:
                             
                             # If the function is void, it can't be used in an expression
                             if operand_type == 'vd':
+                                print(f"ERROR: Void function '{var_name}' cannot be used in expression")
                                 raise SemanticError(f"Void function '{var_name}' cannot be used in an expression", line, column)
                         
                         # Check for struct member access: id.member
@@ -2035,10 +2070,12 @@ class SemanticAnalyzer:
                             # Get type from symbol table
                             symbol = self.current_scope.lookup(var_name)
                             if not symbol:
+                                print(f"ERROR: Undefined variable '{var_name}'")
                                 raise SemanticError(f"Undefined variable '{var_name}'", line, column)
                             
                             # Check if it's a function being used without parentheses
                             if symbol.type == 'function':
+                                print(f"ERROR: Function '{var_name}' used without parentheses")
                                 raise SemanticError(f"Function '{var_name}' used without parentheses", line, column)
                             
                             # Check if variable is initialized
@@ -2054,6 +2091,7 @@ class SemanticAnalyzer:
                         # Get type from symbol table
                         symbol = self.current_scope.lookup(var_name)
                         if not symbol:
+                            print(f"ERROR: Undefined variable '{var_name}'")
                             raise SemanticError(f"Undefined variable '{var_name}'", line, column)
                         
                         operand_type = symbol.data_type
@@ -2094,6 +2132,7 @@ class SemanticAnalyzer:
                             self.advance()
                             
                             if subexpr_type != 'bln':
+                                print(f"ERROR: Cannot apply '!' to non-boolean type '{subexpr_type}'")
                                 raise SemanticError(f"Type mismatch: Cannot apply '!' to non-boolean type '{subexpr_type}'", line, column)
                         else:
                             # Not a parenthesized expression - just get the next token
@@ -2103,6 +2142,7 @@ class SemanticAnalyzer:
                                 # Variable reference
                                 symbol = self.current_scope.lookup(next_token_value)
                                 if not symbol:
+                                    print(f"ERROR: Undefined variable '{next_token_value}'")
                                     raise SemanticError(f"Undefined variable '{next_token_value}'", next_line, next_column)
                                 
                                 subexpr_type = symbol.data_type
@@ -2112,6 +2152,7 @@ class SemanticAnalyzer:
                                 subexpr_type = None
                             
                             if subexpr_type != 'bln':
+                                print(f"ERROR: Cannot apply '!' to non-boolean type '{subexpr_type}'")
                                 raise SemanticError(f"Type mismatch: Cannot apply '!' to non-boolean type '{subexpr_type}'", next_line, next_column)
                             
                             self.advance()
@@ -2124,6 +2165,7 @@ class SemanticAnalyzer:
                     continue
                 else:
                     # Unknown token in expression
+                    print(f"ERROR: Unexpected token '{token_type}' in expression")
                     raise SemanticError(f"Unexpected token '{token_type}' in expression", line, column)
                 
                 # Handle the operand in context
@@ -2133,22 +2175,25 @@ class SemanticAnalyzer:
                 elif current_operator:
                     # This is a right operand - check compatibility with operator and left operand
                     if current_operator in self.arithmetic_operators:
-                        # Arithmetic operators require numeric operands of same type
+                        # Arithmetic operators require numeric operands - now allow mixing nt and dbl
                         if current_type not in ['nt', 'dbl'] or operand_type not in ['nt', 'dbl']:
+                            print(f"ERROR: Cannot apply '{current_operator}' to '{current_type}' and '{operand_type}'")
                             raise SemanticError(
                                 f"Type mismatch: Cannot apply '{current_operator}' to '{current_type}' and '{operand_type}'",
                                 line, column
                             )
-                        if current_type != operand_type:
-                            raise SemanticError(
-                                f"Type mismatch: Conso requires identical types for arithmetic operations ('{current_type}' and '{operand_type}')",
-                                line, column
-                            )
-                        # Result is same as operand type
-                        current_type = operand_type
+                        
+                        # If we mix nt and dbl, the result is dbl
+                        if current_type == 'dbl' or operand_type == 'dbl':
+                            current_type = 'dbl'
+                        else:
+                            # Both are nt, result remains nt
+                            current_type = 'nt'
+                            
                     elif current_operator in self.logical_operators:
                         # Logical operators require boolean operands
                         if current_type != 'bln' or operand_type != 'bln':
+                            print(f"ERROR: Cannot apply '{current_operator}' to '{current_type}' and '{operand_type}'")
                             raise SemanticError(
                                 f"Type mismatch: Cannot apply '{current_operator}' to '{current_type}' and '{operand_type}'",
                                 line, column
@@ -2159,21 +2204,22 @@ class SemanticAnalyzer:
                         # Relational operators behavior depends on specific operator
                         if current_operator in self.equality_operators:
                             # == and != work for all types, but operands must match
+                            # However, we'll allow comparing nt with dbl
                             if current_type != operand_type:
-                                raise SemanticError(
-                                    f"Type mismatch: Cannot compare '{current_type}' with '{operand_type}'",
-                                    line, column
-                                )
+                                # Allow comparing nt with dbl
+                                if not ((current_type == 'nt' and operand_type == 'dbl') or 
+                                    (current_type == 'dbl' and operand_type == 'nt')):
+                                    print(f"ERROR: Cannot compare '{current_type}' with '{operand_type}'")
+                                    raise SemanticError(
+                                        f"Type mismatch: Cannot compare '{current_type}' with '{operand_type}'",
+                                        line, column
+                                    )
                         else:
-                            # <, >, <=, >= only work for numeric types
+                            # <, >, <=, >= only work for numeric types - now allow mixing nt and dbl
                             if current_type not in ['nt', 'dbl'] or operand_type not in ['nt', 'dbl']:
+                                print(f"ERROR: Cannot apply '{current_operator}' to '{current_type}' and '{operand_type}'")
                                 raise SemanticError(
                                     f"Type mismatch: Cannot apply '{current_operator}' to '{current_type}' and '{operand_type}'",
-                                    line, column
-                                )
-                            if current_type != operand_type:
-                                raise SemanticError(
-                                    f"Type mismatch: Cannot compare '{current_type}' with '{operand_type}'",
                                     line, column
                                 )
                         
@@ -2183,6 +2229,7 @@ class SemanticAnalyzer:
                     elif current_operator in self.string_concat_operator:
                         # String concatenation requires string operands
                         if current_type != 'strng' or operand_type != 'strng':
+                            print(f"ERROR: Cannot concatenate '{current_type}' with '{operand_type}'")
                             raise SemanticError(
                                 f"Type mismatch: Cannot concatenate '{current_type}' with '{operand_type}'",
                                 line, column
@@ -2200,6 +2247,7 @@ class SemanticAnalyzer:
                 if token_type in self.arithmetic_operators:
                     # Verify current type supports arithmetic
                     if current_type not in ['nt', 'dbl']:
+                        print(f"ERROR: Cannot apply arithmetic operator '{token_type}' to '{current_type}'")
                         raise SemanticError(
                             f"Type mismatch: Cannot apply '{token_type}' to '{current_type}'",
                             line, column
@@ -2210,6 +2258,7 @@ class SemanticAnalyzer:
                 elif token_type in self.logical_operators:
                     # Verify current type is boolean
                     if current_type != 'bln':
+                        print(f"ERROR: Cannot apply logical operator '{token_type}' to '{current_type}'")
                         raise SemanticError(
                             f"Type mismatch: Cannot apply '{token_type}' to '{current_type}'",
                             line, column
@@ -2218,6 +2267,20 @@ class SemanticAnalyzer:
                     expecting_operand = True
                     self.advance()
                 elif token_type in self.relational_operators:
+                    # For relational operators, verify based on specific operator
+                    if token_type in self.equality_operators:
+                        # == and != work for all types
+                        # No additional checks needed here, will check type match with right operand
+                        pass
+                    else:
+                        # <, >, <=, >= only work with numeric types
+                        if current_type not in ['nt', 'dbl']:
+                            print(f"ERROR: Cannot apply relational operator '{token_type}' to '{current_type}'")
+                            raise SemanticError(
+                                f"Type mismatch: Cannot apply '{token_type}' to '{current_type}'",
+                                line, column
+                            )
+                    
                     # Store the relational operator
                     current_operator = token_type
                     contains_relational_op = True
@@ -2226,6 +2289,7 @@ class SemanticAnalyzer:
                 elif token_type == '`':
                     # String concatenation operator
                     if current_type != 'strng':
+                        print(f"ERROR: Cannot apply string concatenation to non-string type '{current_type}'")
                         raise SemanticError(
                             f"Type mismatch: Cannot apply '`' to non-string type '{current_type}'",
                             line, column
@@ -2235,17 +2299,24 @@ class SemanticAnalyzer:
                     self.advance()
                 elif token_type == ')':
                     # This should be handled by the parenthesis processing logic
+                    print(f"ERROR: Unexpected closing parenthesis")
                     raise SemanticError(f"Unexpected closing parenthesis", line, column)
                 else:
                     # Unknown operator
+                    print(f"ERROR: Unexpected token '{token_type}' in expression")
                     raise SemanticError(f"Unexpected token '{token_type}' in expression", line, column)
         
         if expecting_operand:
+            print(f"ERROR: Incomplete expression: expecting operand")
             raise SemanticError("Incomplete expression: expecting operand", line, column)
         
         # If we have a pending operator, that's an error
         if current_operator:
+            print(f"ERROR: Incomplete expression: missing right operand for '{current_operator}'")
             raise SemanticError(f"Incomplete expression: missing right operand for '{current_operator}'", line, column)
+        
+        # Print final result for debugging
+        print(f"Expression final type: {current_type}, contains relational: {contains_relational_op}")
         
         # If expression contains a relational operator, result is boolean
         if contains_relational_op:
@@ -2945,6 +3016,9 @@ class SemanticAnalyzer:
         while self.current_token_index < len(self.token_stream):
             token_type, token_value, line, column = self.get_current_token()
             
+            # Add debug output
+            print(f"Processing token in block: {token_type} '{token_value}' at line {line}, column {column}")
+            
             # Check for end of block
             if token_type == '}':
                 self.advance()  # Move past '}'
@@ -2962,6 +3036,8 @@ class SemanticAnalyzer:
             elif token_type == 'swtch':
                 self.analyze_switch_statement()
             elif token_type == 'prnt':
+                # Explicitly call analyze_print_statement when 'prnt' token is found
+                print("Found print statement - calling analyze_print_statement()")  # Debug
                 self.analyze_print_statement()
             elif token_type == 'rtrn':
                 # Handle return inside blocks
@@ -3465,24 +3541,42 @@ class SemanticAnalyzer:
         self.advance()  # Move past semicolon
 
     def analyze_print_statement(self):
-        """Analyze a print statement with proper type checking"""
-        print("\n*** PRINT STATEMENT DETECTED ***\n")
+        """
+        Analyze a print statement with proper type checking.
+        This function enforces the same strict type constraints
+        as regular expressions in the Conso language.
+        """
+        # Current token should be 'prnt'
+        token_type, token_value, line, column = self.get_current_token()
+        if token_type != 'prnt':
+            raise SemanticError(f"Expected 'prnt' keyword, got '{token_type}'", line, column)
         
-        # Skip past 'prnt'
-        self.advance()
+        print(f"Analyzing print statement at line {line}, column {column}")  # Debug output
         
-        # Skip past '('
-        self.advance()
+        self.advance()  # Move past 'prnt'
         
-        # Handle empty print statement
+        # Check for opening parenthesis
+        token_type, token_value, line, column = self.get_current_token()
+        if token_type != '(':
+            raise SemanticError(f"Expected '(' after 'prnt', got '{token_type}'", line, column)
+        
+        self.advance()  # Move past '('
+        
+        # Handle empty print statement: prnt();
         if self.get_current_token()[0] == ')':
             self.advance()  # Skip ')'
+            
+            # Check for semicolon
+            token_type, token_value, line, column = self.get_current_token()
+            if token_type != ';':
+                raise SemanticError(f"Expected ';' after print statement", line, column)
+            
             self.advance()  # Skip ';'
             return
         
         # Process expressions until closing parenthesis
         while True:
-            # Mark the start of the expression
+            # Mark the start of the current print argument
             expr_start = self.current_token_index
             
             # Find the end of this expression (comma or closing parenthesis)
@@ -3509,18 +3603,20 @@ class SemanticAnalyzer:
             # Reset to start of expression for analysis
             self.current_token_index = expr_start
             
-            # Print debug info to see the expression tokens
+            # Get the tokens being analyzed for debug
             expr_tokens = self.token_stream[expr_start:expr_end]
-            expr_str = " ".join([f"{t[1]}" for t in expr_tokens])
-            print(f"Analyzing print expression: {expr_str}")
+            expr_str = " ".join([f"{t[0]}('{t[1]}')" for t in expr_tokens])
+            print(f"Print expression tokens: {expr_str}")  # Debug output
             
-            # Use the regular expression analysis which has proper type checking
+            # Analyze the expression using our standard expression analyzer
             try:
-                expr_type = self._analyze_print_expression(expr_end)
-                print(f"Expression type: {expr_type}")
+                # The standard analyze_expression will properly enforce all type constraints
+                # including arithmetic, relational, logical, and string operations
+                expr_type = self.analyze_expression(expr_end)
+                print(f"Print expression type result: {expr_type}")  # Debug output
             except SemanticError as e:
-                # Add context that this error occurred in a print statement
-                print(f"SEMANTIC ERROR: {e}")
+                print(f"Semantic error in print expression: {e}")  # Debug output
+                # Re-raise the error
                 raise e
             
             # Move to the end of this expression
@@ -3533,302 +3629,20 @@ class SemanticAnalyzer:
                 # We should be at the closing parenthesis
                 break
         
-        # Skip past closing parenthesis and semicolon
+        # We should now be at the closing parenthesis
+        token_type, token_value, line, column = self.get_current_token()
+        if token_type != ')':
+            raise SemanticError(f"Expected ')' at end of print statement", line, column)
+        
         self.advance()  # Skip ')'
         
-        if self.get_current_token()[0] != ';':
-            raise SemanticError(f"Expected ';' after print statement", 
-                            self.get_current_token()[2], self.get_current_token()[3])
+        # Check for semicolon
+        token_type, token_value, line, column = self.get_current_token()
+        if token_type != ';':
+            raise SemanticError(f"Expected ';' after print statement", line, column)
         
         self.advance()  # Skip ';'
-
-    def _analyze_print_expression(self, end_pos):
-        """
-        Analyze an expression in a print statement with strict type checking.
-        This is a direct application of the _parse_expression logic.
-        """
-        # For complex expressions, we need to track:
-        # 1. The current operand type we're working with
-        # 2. The current operator (if any)
-        # 3. Whether we're expecting an operand or operator
-        
-        current_type = None
-        current_operator = None
-        expecting_operand = True
-        contains_relational_op = False
-        
-        while self.current_token_index < end_pos:
-            token_type, token_value, line, column = self.get_current_token()
-            
-            # Track the tokens being processed
-            print(f"Token: {token_type} '{token_value}'")
-            
-            # Handle opening parenthesis - parse subexpression
-            if token_type == '(':
-                self.advance()  # Skip over the opening parenthesis
-                
-                # Parse the subexpression
-                subexpr_start = self.current_token_index
-                paren_level = 1
-                
-                # Find matching closing parenthesis
-                while paren_level > 0 and self.current_token_index < end_pos:
-                    self.advance()
-                    if self.current_token_index >= len(self.token_stream):
-                        raise SemanticError("Unclosed parenthesis", line, column)
-                    
-                    current_token = self.token_stream[self.current_token_index][0]
-                    if current_token == '(':
-                        paren_level += 1
-                    elif current_token == ')':
-                        paren_level -= 1
-                
-                if paren_level > 0:
-                    raise SemanticError("Unclosed parenthesis", line, column)
-                
-                # Recursively parse the subexpression
-                subexpr_end = self.current_token_index  # Points to the closing parenthesis
-                self.current_token_index = subexpr_start
-                
-                subexpr_type, subexpr_relational = self._parse_expression(subexpr_end)
-                print(f"Subexpression type: {subexpr_type}")
-                
-                # Skip over the closing parenthesis
-                self.advance()
-                
-                # Update current state
-                if current_operator:
-                    # Check compatibility with operator
-                    if current_operator in self.arithmetic_operators:
-                        # Arithmetic operators require numeric operands
-                        if current_type not in ['nt', 'dbl'] or subexpr_type not in ['nt', 'dbl']:
-                            raise SemanticError(
-                                f"Type mismatch: Cannot apply '{current_operator}' to '{current_type}' and '{subexpr_type}'",
-                                line, column
-                            )
-                        if current_type != subexpr_type:
-                            raise SemanticError(
-                                f"Type mismatch: Conso requires identical types for arithmetic operations ('{current_type}' and '{subexpr_type}')",
-                                line, column
-                            )
-                        # Result is same type as operands
-                        current_type = subexpr_type
-                    elif current_operator in self.logical_operators:
-                        # Logical operators require boolean operands
-                        if current_type != 'bln' or subexpr_type != 'bln':
-                            raise SemanticError(
-                                f"Type mismatch: Cannot apply '{current_operator}' to '{current_type}' and '{subexpr_type}'",
-                                line, column
-                            )
-                        # Result is boolean
-                        current_type = 'bln'
-                    elif current_operator in self.relational_operators:
-                        # Relational operators behavior depends on specific operator
-                        if current_operator in self.equality_operators:
-                            # == and != work for all types, but both operands must be same type
-                            if current_type != subexpr_type:
-                                raise SemanticError(
-                                    f"Type mismatch: Cannot compare '{current_type}' with '{subexpr_type}'",
-                                    line, column
-                                )
-                        else:
-                            # <, >, <=, >= only work for numeric types
-                            if current_type not in ['nt', 'dbl'] or subexpr_type not in ['nt', 'dbl']:
-                                raise SemanticError(
-                                    f"Type mismatch: Cannot apply '{current_operator}' to '{current_type}' and '{subexpr_type}'",
-                                    line, column
-                                )
-                            if current_type != subexpr_type:
-                                raise SemanticError(
-                                    f"Type mismatch: Cannot compare '{current_type}' with '{subexpr_type}'",
-                                    line, column
-                                )
-                        
-                        # Result is boolean
-                        current_type = 'bln'
-                        contains_relational_op = True
-                    elif current_operator in self.string_concat_operator:
-                        # String concatenation requires string operands
-                        if current_type != 'strng' or subexpr_type != 'strng':
-                            raise SemanticError(
-                                f"Type mismatch: Cannot concatenate '{current_type}' with '{subexpr_type}'",
-                                line, column
-                            )
-                        # Result is string
-                        current_type = 'strng'
-                    
-                    # Reset operator after applying it
-                    current_operator = None
-                    expecting_operand = False
-                else:
-                    # This is the first operand
-                    current_type = subexpr_type
-                    contains_relational_op = contains_relational_op or subexpr_relational
-                    expecting_operand = False
-                
-                # Update relational operator flag
-                contains_relational_op = contains_relational_op or subexpr_relational
-                
-                continue
-            
-            # Handle operands
-            if expecting_operand:
-                operand_type = None
-                
-                # Determine the type of the current operand
-                if token_type in ['ntlit', '~ntlit']:
-                    operand_type = 'nt'
-                    self.advance()
-                elif token_type in ['dbllit', '~dbllit']:
-                    operand_type = 'dbl'
-                    self.advance()
-                elif token_type in ['true', 'false', 'blnlit']:
-                    operand_type = 'bln'
-                    self.advance()
-                elif token_type == 'chrlit':
-                    operand_type = 'chr'
-                    self.advance()
-                elif token_type == 'strnglit':
-                    operand_type = 'strng'
-                    self.advance()
-                elif token_type == 'id':
-                    # Get type from symbol table
-                    symbol = self.current_scope.lookup(token_value)
-                    if not symbol:
-                        raise SemanticError(f"Undefined variable '{token_value}'", line, column)
-                    
-                    operand_type = symbol.data_type
-                    print(f"Variable '{token_value}' has type '{operand_type}'")
-                    self.advance()
-                else:
-                    # Unknown token in expression
-                    raise SemanticError(f"Unexpected token '{token_type}' in expression", line, column)
-                
-                # Handle the operand in context
-                if current_type is None:
-                    # This is the first operand
-                    current_type = operand_type
-                elif current_operator:
-                    # This is a right operand - check compatibility with operator and left operand
-                    if current_operator in self.arithmetic_operators:
-                        # Arithmetic operators require numeric operands of same type
-                        if current_type not in ['nt', 'dbl'] or operand_type not in ['nt', 'dbl']:
-                            raise SemanticError(
-                                f"Type mismatch: Cannot apply '{current_operator}' to '{current_type}' and '{operand_type}'",
-                                line, column
-                            )
-                        if current_type != operand_type:
-                            raise SemanticError(
-                                f"Type mismatch: Conso requires identical types for arithmetic operations ('{current_type}' and '{operand_type}')",
-                                line, column
-                            )
-                        # Result is same as operand type
-                        current_type = operand_type
-                    elif current_operator in self.logical_operators:
-                        # Logical operators require boolean operands
-                        if current_type != 'bln' or operand_type != 'bln':
-                            raise SemanticError(
-                                f"Type mismatch: Cannot apply '{current_operator}' to '{current_type}' and '{operand_type}'",
-                                line, column
-                            )
-                        # Result is boolean
-                        current_type = 'bln'
-                    elif current_operator in self.relational_operators:
-                        # Relational operators behavior depends on specific operator
-                        if current_operator in self.equality_operators:
-                            # == and != work for all types, but operands must match
-                            if current_type != operand_type:
-                                raise SemanticError(
-                                    f"Type mismatch: Cannot compare '{current_type}' with '{operand_type}'",
-                                    line, column
-                                )
-                        else:
-                            # <, >, <=, >= only work for numeric types
-                            if current_type not in ['nt', 'dbl'] or operand_type not in ['nt', 'dbl']:
-                                raise SemanticError(
-                                    f"Type mismatch: Cannot apply '{current_operator}' to '{current_type}' and '{operand_type}'",
-                                    line, column
-                                )
-                            if current_type != operand_type:
-                                raise SemanticError(
-                                    f"Type mismatch: Cannot compare '{current_type}' with '{operand_type}'",
-                                    line, column
-                                )
-                        
-                        # Result is always boolean
-                        current_type = 'bln'
-                        contains_relational_op = True
-                    elif current_operator in self.string_concat_operator:
-                        # String concatenation requires string operands
-                        if current_type != 'strng' or operand_type != 'strng':
-                            raise SemanticError(
-                                f"Type mismatch: Cannot concatenate '{current_type}' with '{operand_type}'",
-                                line, column
-                            )
-                        # Result is string
-                        current_type = 'strng'
-                    
-                    # Clear the operator now that it's been applied
-                    current_operator = None
-                
-                expecting_operand = False
-            
-            # Handle operators
-            else:
-                if token_type in self.arithmetic_operators:
-                    # Verify current type supports arithmetic
-                    if current_type not in ['nt', 'dbl']:
-                        raise SemanticError(
-                            f"Type mismatch: Cannot apply '{token_type}' to '{current_type}'",
-                            line, column
-                        )
-                    current_operator = token_type
-                    expecting_operand = True
-                    self.advance()
-                elif token_type in self.logical_operators:
-                    # Verify current type is boolean
-                    if current_type != 'bln':
-                        raise SemanticError(
-                            f"Type mismatch: Cannot apply '{token_type}' to '{current_type}'",
-                            line, column
-                        )
-                    current_operator = token_type
-                    expecting_operand = True
-                    self.advance()
-                elif token_type in self.relational_operators:
-                    # Store the relational operator
-                    current_operator = token_type
-                    contains_relational_op = True
-                    expecting_operand = True
-                    self.advance()
-                elif token_type == '`':
-                    # String concatenation operator
-                    if current_type != 'strng':
-                        raise SemanticError(
-                            f"Type mismatch: Cannot apply '`' to non-string type '{current_type}'",
-                            line, column
-                        )
-                    current_operator = token_type
-                    expecting_operand = True
-                    self.advance()
-                else:
-                    # Unknown operator
-                    raise SemanticError(f"Unexpected token '{token_type}' in expression", line, column)
-        
-        if expecting_operand:
-            raise SemanticError("Incomplete expression: expecting operand", line, column)
-        
-        # If we have a pending operator, that's an error
-        if current_operator:
-            raise SemanticError(f"Incomplete expression: missing right operand for '{current_operator}'", line, column)
-        
-        print(f"Final expression type: {current_type}")
-        
-        # If expression contains a relational operator, result is boolean
-        if contains_relational_op:
-            return 'bln'
-        
-        return current_type
+        print("Print statement analysis completed successfully")  # Debug output
 
     def advance(self):
         """Move to the next token"""
