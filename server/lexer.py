@@ -145,7 +145,7 @@ DELIMITERS = {
 'del19': {' ', ';', ',', '}', ')', '=', '>', '<', '!'},
 'del20': set(ALPHA + DIGITZERO + ' ' + '"' + "'" + '{'),
 'del21': set(DIGIT),
-'del22': {' ', ',', ';', '(', ')', '{', '[', ']'},
+'del22': {' ', ',', ';', '(', ')', '{', '[', ']'}, 
 'del23': {' ', ';', ',', '}', ']', ')', ':', '+', '-', '*', '/', '%', '=' , '>', '<', '!', '&', '|'},
 'del24': set(' ' + DIGITZERO + ALPHA + '~' + '('),
 'del25': set(' ' + DIGITZERO + ALPHA + '~' + '"' + "'"),
@@ -736,6 +736,37 @@ class Lexer:
             number_str += '-'
             self.advance()
 
+        # Handle leading zeros for integers
+        leading_zeros = 0
+        while self.current_char == '0':
+            leading_zeros += 1
+            self.advance()
+        
+        # If there were leading zeros and the next char is not a digit or decimal point
+        # then the number is just 0
+        if leading_zeros > 0 and (self.current_char is None or (not self.current_char.isdigit() and self.current_char != '.')):
+            # If the number is just 0 or -0, normalize to 0 (remove negative sign for -0)
+            if is_negative:
+                # Negative zero is normalized to regular zero
+                number_str = "0"
+                is_negative = False
+            else:
+                number_str = "0"
+            token_type = TT_INTEGERLIT
+            return Token(token_type, number_str, start_line, start_column), None
+        
+        # If we had leading zeros but the next char is a digit, add just one zero
+        # if the next char is a decimal point
+        if leading_zeros > 0 and self.current_char == '.':
+            number_str += "0"
+        elif leading_zeros > 0 and self.current_char is not None and self.current_char.isdigit():
+            # Skip the leading zeros for integer (nt) values
+            pass
+        elif leading_zeros > 0:
+            # If there were only zeros and no more digits/decimal point, set to 0
+            number_str += "0"
+
+        # Continue collecting the rest of the number
         while self.current_char is not None and (self.current_char.isdigit() or self.current_char == '.'):
             if self.current_char == '.':
                 if is_decimal:
@@ -750,20 +781,67 @@ class Lexer:
 
         # Validate Integer (nt)
         if not is_decimal:
-            if len(number_str) > 16:
+            # For integers, remove any leading zeros
+            if number_str.startswith('-'):
+                clean_number = '-' + number_str[1:].lstrip('0')
+                # If it was all zeros, keep one
+                if clean_number == '-' or clean_number == '':
+                    clean_number = '0'  # Normalize -0 to 0
+                    is_negative = False
+            else:
+                clean_number = number_str.lstrip('0')
+                # If it was all zeros, keep one
+                if clean_number == '':
+                    clean_number = '0'
+                    
+            if len(clean_number) > 16 and not clean_number.startswith('-'):
                 return None, LexerError(f"Integer exceeds maximum length of 16 digits", start_line, start_column)
+            if len(clean_number) > 17 and clean_number.startswith('-'):  # Account for negative sign
+                return None, LexerError(f"Integer exceeds maximum length of 16 digits", start_line, start_column)
+            
             token_type = TT_NEGINTLIT if is_negative else TT_INTEGERLIT
-            return Token(token_type, number_str, start_line, start_column), None
+            return Token(token_type, clean_number, start_line, start_column), None
 
         # Validate Double (dbl)
         else:
+            # For doubles, handle trailing zeros in decimal part
             parts = number_str.split('.')
-            if len(parts[0]) > 16:
+            
+            # Clean the whole number part (remove leading zeros)
+            if parts[0].startswith('-'):
+                whole_part = '-' + parts[0][1:].lstrip('0')
+                if whole_part == '-':
+                    whole_part = '-0'
+            else:
+                whole_part = parts[0].lstrip('0')
+                if whole_part == '':
+                    whole_part = '0'
+            
+            # Clean the decimal part (remove trailing zeros, keep at least 2 digits)
+            decimal_part = parts[1].rstrip('0')
+            if decimal_part == '':
+                decimal_part = '00'  # Ensure at least 2 decimal places
+            elif len(decimal_part) == 1:
+                decimal_part = decimal_part + '0'  # Ensure at least 2 decimal places
+                
+            # Check for length limits
+            if len(whole_part) > 16 and not whole_part.startswith('-'):
                 return None, LexerError("Double's whole number part exceeds 16 digits", start_line, start_column)
-            if len(parts[1]) < 1 or len(parts[1]) > 8:
+            if len(whole_part) > 17 and whole_part.startswith('-'):  # Account for negative sign
+                return None, LexerError("Double's whole number part exceeds 16 digits", start_line, start_column)
+            if len(decimal_part) < 1 or len(decimal_part) > 8:
                 return None, LexerError("Double's decimal part must be between 1 and 8 digits", start_line, start_column)
+            
+            # Reconstruct the cleaned double
+            clean_number = whole_part + '.' + decimal_part
+            
+            # Normalize -0.00 to 0.00
+            if clean_number.startswith('-0.') and all(d == '0' for d in clean_number[3:]):
+                clean_number = clean_number[1:]  # Remove the negative sign
+                is_negative = False
+                
             token_type = TT_NEGDOUBLELIT if is_negative else TT_DOUBLELIT
-            return Token(token_type, number_str, start_line, start_column), None
+            return Token(token_type, clean_number, start_line, start_column), None
 
     def make_string(self):
         start_line = self.line
