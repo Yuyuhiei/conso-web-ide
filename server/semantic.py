@@ -1842,6 +1842,21 @@ class SemanticAnalyzer:
                 
                 # Otherwise reset position and fall back to regular expression parsing
                 self.current_token_index = original_pos
+                
+            # NEW: Check if next token is square bracket (array access)
+            elif (next_pos < len(self.token_stream) and 
+                self.token_stream[next_pos][0] == '['):
+                print(f"Found potential array access: {func_name}[...]")
+                
+                # This is an array access - we need to handle it specially
+                element_type = self.analyze_array_element()
+                
+                # If we're at or beyond the end_pos, we're done
+                if self.current_token_index >= end_pos:
+                    return element_type
+                
+                # Otherwise reset position and fall back to regular expression parsing
+                self.current_token_index = original_pos
         
         # Regular expression parsing
         result_type, has_relational = self._parse_expression(end_pos)
@@ -1853,8 +1868,7 @@ class SemanticAnalyzer:
         Parse an expression and return its type and if it contains relational operators.
         Returns a tuple (type, has_relational_op)
         
-        UPDATED to allow arithmetic operations between nt and dbl types.
-        Result will be of type dbl when mixing types.
+        UPDATED to handle nested parentheses correctly.
         """
         # For complex expressions, we need to track:
         # 1. The current operand type we're working with
@@ -1864,7 +1878,6 @@ class SemanticAnalyzer:
         current_type = None
         current_operator = None
         expecting_operand = True
-        pending_right_operand = False
         
         # If this is a relational expression, the result is boolean
         contains_relational_op = False
@@ -1884,41 +1897,38 @@ class SemanticAnalyzer:
             if token_type == '(':
                 self.advance()  # Skip over the opening parenthesis
                 
-                # Parse the subexpression
+                # Parse the subexpression - find matching closing parenthesis first
                 subexpr_start = self.current_token_index
                 paren_level = 1
+                subexpr_end = None
                 
                 # Find matching closing parenthesis
-                while paren_level > 0 and self.current_token_index < end_pos:
-                    self.advance()
-                    if self.current_token_index >= len(self.token_stream):
-                        raise SemanticError("Unclosed parenthesis", line, column)
-                    
-                    current_token = self.token_stream[self.current_token_index][0]
-                    if current_token == '(':
+                temp_pos = self.current_token_index
+                while paren_level > 0 and temp_pos < end_pos:
+                    temp_token_type = self.token_stream[temp_pos][0]
+                    if temp_token_type == '(':
                         paren_level += 1
-                    elif current_token == ')':
+                    elif temp_token_type == ')':
                         paren_level -= 1
+                        if paren_level == 0:
+                            subexpr_end = temp_pos
+                    temp_pos += 1
                 
-                if paren_level > 0:
+                if subexpr_end is None:
                     raise SemanticError("Unclosed parenthesis", line, column)
-                
-                # Move back to position right after the opening parenthesis
-                subexpr_end = self.current_token_index  # Points to the closing parenthesis
-                self.current_token_index = subexpr_start
                 
                 # Recursively parse the subexpression
                 subexpr_type, subexpr_relational = self._parse_expression(subexpr_end)
                 print(f"Subexpression type: {subexpr_type}, relational: {subexpr_relational}")
                 
-                # Skip over the closing parenthesis
-                self.advance()
+                # Move to position after the closing parenthesis
+                self.current_token_index = subexpr_end + 1
                 
                 # Update current state
                 if current_operator:
                     # Check compatibility with operator
                     if current_operator in self.arithmetic_operators:
-                        # Arithmetic operators require numeric operands, but we now allow mixing nt and dbl
+                        # Arithmetic operators require numeric operands, allow mixing nt and dbl
                         if current_type not in ['nt', 'dbl'] or subexpr_type not in ['nt', 'dbl']:
                             print(f"ERROR: Cannot apply '{current_operator}' to '{current_type}' and '{subexpr_type}'")
                             raise SemanticError(
@@ -1997,9 +2007,39 @@ class SemanticAnalyzer:
             # Handle operands (values, variables, function calls, struct member access)
             if expecting_operand:
                 operand_type = None
+
+                 # Handle pre-increment/decrement operators
+                if token_type in ['++', '--']:
+                    print(f"Found pre-{token_type} operator")
+                    pre_op = token_type
+                    self.advance()  # Move past the operator
+                    
+                    # Must be followed by an identifier
+                    if self.get_current_token()[0] != 'id':
+                        print(f"ERROR: {pre_op} must be followed by an identifier")
+                        raise SemanticError(f"{pre_op} operator must be followed by an identifier", line, column)
+                    
+                    var_name = self.get_current_token()[1]
+                    var_line, var_column = self.get_current_token()[2], self.get_current_token()[3]
+                    
+                    # Check if variable exists
+                    symbol = self.current_scope.lookup(var_name)
+                    if not symbol:
+                        print(f"ERROR: Undefined variable '{var_name}'")
+                        raise SemanticError(f"Undefined variable '{var_name}'", var_line, var_column)
+                    
+                    # Check if variable is of type 'nt'
+                    if symbol.data_type != 'nt':
+                        print(f"ERROR: {pre_op} operator can only be applied to 'nt' variables, not '{symbol.data_type}'")
+                        raise SemanticError(f"{pre_op} operator can only be applied to 'nt' variables, not '{symbol.data_type}'", 
+                                        var_line, var_column)
+                    
+                    # Pre-increment/decrement returns the modified value
+                    operand_type = 'nt'
+                    self.advance()  # Move past the variable name
                 
                 # Determine the type of the current operand
-                if token_type in ['ntlit', '~ntlit']:
+                elif token_type in ['ntlit', '~ntlit']:
                     operand_type = 'nt'
                     self.advance()
                 elif token_type in ['dbllit', '~dbllit']:
@@ -2024,8 +2064,18 @@ class SemanticAnalyzer:
                     if self.current_token_index < end_pos:
                         next_token = self.get_current_token()[0]
 
+                        # Check for array access: id[...]
+                        if next_token == '[':
+                            print(f"Found array access in expression: {var_name}[...]")
+                            # Go back to array name
+                            self.current_token_index = save_pos
+                            
+                            # Get array element type
+                            operand_type = self.analyze_array_element()
+                            print(f"Array element type in expression: {operand_type}")
+                        
                         # Check for post-increment or post-decrement
-                        if next_token in ['++', '--']:
+                        elif next_token in ['++', '--']:
                             # These operators can only be applied to 'nt' variables
                             symbol = self.current_scope.lookup(var_name)
                             if not symbol:
@@ -2038,9 +2088,9 @@ class SemanticAnalyzer:
                             
                             operand_type = 'nt'
                             self.advance()  # Move past the operator
-                            
+                        
                         # Check for function call: id(...)
-                        if next_token == '(':
+                        elif next_token == '(':
                             # This is a function call within an expression
                             # Go back to function name
                             self.current_token_index = save_pos
@@ -2299,6 +2349,7 @@ class SemanticAnalyzer:
                     self.advance()
                 elif token_type == ')':
                     # This should be handled by the parenthesis processing logic
+                    # If we encounter a closing parenthesis here, it means it's not balanced properly
                     print(f"ERROR: Unexpected closing parenthesis")
                     raise SemanticError(f"Unexpected closing parenthesis", line, column)
                 else:
@@ -2323,6 +2374,128 @@ class SemanticAnalyzer:
             return 'bln', True
         
         return current_type, contains_relational_op
+
+    def analyze_array_element(self):
+        """
+        Analyze an array element access expression and return the element type.
+        Used for expressions like arr[1] when they appear on right side of assignments.
+        """
+        # Get array name
+        token_type, var_name, line, column = self.get_current_token()
+        if token_type != 'id':
+            raise SemanticError(f"Expected array identifier, got {token_type}", line, column)
+        
+        print(f"Analyzing array element access for '{var_name}' at line {line}, column {column}")
+        
+        # Check if variable exists
+        symbol = self.current_scope.lookup(var_name)
+        if not symbol:
+            raise SemanticError(f"Undefined variable '{var_name}'", line, column)
+        
+        # Check that it's an array
+        if not symbol.is_array:
+            raise SemanticError(f"Variable '{var_name}' is not an array", line, column)
+        
+        self.advance()  # Move past array name
+        
+        # Process opening bracket
+        token_type, token_value, line, column = self.get_current_token()
+        if token_type != '[':
+            raise SemanticError(f"Expected '[', got {token_type}", line, column)
+        
+        self.advance()  # Move past '['
+        
+        # Save the current index token for bounds checking
+        index1_token_type, index1_value, index1_line, index1_column = self.get_current_token()
+        
+        # Find the end of this index expression (should be the closing bracket)
+        start_pos = self.current_token_index
+        bracket_level = 1
+        
+        while bracket_level > 0 and self.current_token_index < len(self.token_stream):
+            self.current_token_index += 1
+            if self.current_token_index >= len(self.token_stream):
+                raise SemanticError("Unclosed bracket", line, column)
+            
+            current_token = self.token_stream[self.current_token_index][0]
+            if current_token == '[':
+                bracket_level += 1
+            elif current_token == ']':
+                bracket_level -= 1
+        
+        end_pos = self.current_token_index
+        self.current_token_index = start_pos
+        
+        # Validate index expression is of type nt
+        index1_type = self.analyze_expression(end_pos)
+        if index1_type != 'nt':
+            raise SemanticError(f"Array index must be of type 'nt', got '{index1_type}'", 
+                            index1_line, index1_column)
+        
+        # Check bounds if index is a literal
+        if index1_token_type == 'ntlit' and isinstance(symbol.array_sizes[0], int):
+            index1 = int(index1_value)
+            if index1 < 0 or index1 >= symbol.array_sizes[0]:
+                raise SemanticError(f"Array index {index1} out of bounds (size {symbol.array_sizes[0]})",
+                            index1_line, index1_column)
+        
+        if self.get_current_token()[0] != ']':
+            raise SemanticError(f"Expected ']', got {self.get_current_token()[0]}", 
+                            self.get_current_token()[2], self.get_current_token()[3])
+        
+        self.advance()  # Move past ']'
+        
+        # Check for second dimension if this is a 2D array
+        if symbol.array_dimensions == 2:
+            if self.get_current_token()[0] != '[':
+                raise SemanticError(f"Expected second dimension '[' for 2D array, got {self.get_current_token()[0]}", 
+                                self.get_current_token()[2], self.get_current_token()[3])
+            
+            self.advance()  # Move past '['
+            
+            # Save the current index token for bounds checking
+            index2_token_type, index2_value, index2_line, index2_column = self.get_current_token()
+            
+            # Find the end of this index expression (should be the closing bracket)
+            start_pos = self.current_token_index
+            bracket_level = 1
+            
+            while bracket_level > 0 and self.current_token_index < len(self.token_stream):
+                self.current_token_index += 1
+                if self.current_token_index >= len(self.token_stream):
+                    raise SemanticError("Unclosed bracket", line, column)
+                
+                current_token = self.token_stream[self.current_token_index][0]
+                if current_token == '[':
+                    bracket_level += 1
+                elif current_token == ']':
+                    bracket_level -= 1
+            
+            end_pos = self.current_token_index
+            self.current_token_index = start_pos
+            
+            # Validate index expression is of type nt
+            index2_type = self.analyze_expression(end_pos)
+            if index2_type != 'nt':
+                raise SemanticError(f"Array index must be of type 'nt', got '{index2_type}'", 
+                                index2_line, index2_column)
+            
+            # Check bounds if index is a literal
+            if index2_token_type == 'ntlit' and isinstance(symbol.array_sizes[1], int):
+                index2 = int(index2_value)
+                if index2 < 0 or index2 >= symbol.array_sizes[1]:
+                    raise SemanticError(f"Array index {index2} out of bounds (size {symbol.array_sizes[1]})",
+                                    index2_line, index2_column)
+            
+            if self.get_current_token()[0] != ']':
+                raise SemanticError(f"Expected ']', got {self.get_current_token()[0]}", 
+                                self.get_current_token()[2], self.get_current_token()[3])
+            
+            self.advance()  # Move past ']'
+        
+        # Return the data type of the array element
+        print(f"Array element type: {symbol.data_type}")
+        return symbol.data_type
     
     def is_compatible_type(self, declared_type, value_type):
         """Check if value type is compatible with declared type"""
@@ -3280,18 +3453,42 @@ class SemanticAnalyzer:
         self.current_token_index = increment_start
         
         # Analyze the increment expression - it must involve an 'nt' identifier
-        # Check if it's a simple increment/decrement or an assignment
-        if self.get_current_token()[0] == 'id':
+        # Check for pre-increment/decrement: ++id or --id
+        if self.get_current_token()[0] in ['++', '--']:
+            incr_op = self.get_current_token()[0]
+            self.advance()  # Move past operator
+            
+            if self.get_current_token()[0] != 'id':
+                raise SemanticError(f"Expected an identifier after '{incr_op}' in for loop increment", 
+                                self.get_current_token()[2], self.get_current_token()[3])
+            
             incr_var_name = self.get_current_token()[1]
             incr_var_symbol = self.current_scope.lookup(incr_var_name)
             
             if not incr_var_symbol:
-                raise SemanticError(f"Undefined variable '{incr_var_name}' in for loop increment", increment_line, increment_column)
+                raise SemanticError(f"Undefined variable '{incr_var_name}' in for loop increment", 
+                                self.get_current_token()[2], self.get_current_token()[3])
             
             # Check if variable is of type 'nt'
             if incr_var_symbol.data_type != 'nt':
                 raise SemanticError(f"Variable in for loop increment must be of type 'nt', got '{incr_var_symbol.data_type}'", 
-                                increment_line, increment_column)
+                                self.get_current_token()[2], self.get_current_token()[3])
+            
+            self.advance()  # Move past identifier
+        
+        # Check for post-increment/decrement or other forms: id++ or id-- or other assignments
+        elif self.get_current_token()[0] == 'id':
+            incr_var_name = self.get_current_token()[1]
+            incr_var_symbol = self.current_scope.lookup(incr_var_name)
+            
+            if not incr_var_symbol:
+                raise SemanticError(f"Undefined variable '{incr_var_name}' in for loop increment", 
+                                self.get_current_token()[2], self.get_current_token()[3])
+            
+            # Check if variable is of type 'nt'
+            if incr_var_symbol.data_type != 'nt':
+                raise SemanticError(f"Variable in for loop increment must be of type 'nt', got '{incr_var_symbol.data_type}'", 
+                                self.get_current_token()[2], self.get_current_token()[3])
             
             self.advance()  # Move past identifier
             
