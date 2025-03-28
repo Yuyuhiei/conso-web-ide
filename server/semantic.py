@@ -387,6 +387,11 @@ class SemanticAnalyzer:
                 elif next_token and next_token[0] in ['++', '--']:
                     self.analyze_increment_operation()
                     continue
+                # Check for shortcut assignments
+                elif next_token and next_token[0] in ['+=', '-=', '*=', '/=', '%=']:
+                    print(f"Found shortcut assignment {token_value} {next_token[0]}")
+                    self.analyze_assignment()
+                    continue
             
             # Check for return statement
             if token_type == 'rtrn':
@@ -2515,13 +2520,19 @@ class SemanticAnalyzer:
         return declared_type == value_type
 
     def analyze_assignment(self):
-        """Analyze variable assignment"""
+        """Analyze variable assignment including shortcut assignment operators"""
         var_token_type, var_name, line, column = self.get_current_token()
+        
+        # Debug output
+        print(f"Analyzing assignment for variable '{var_name}' at line {line}, column {column}")
         
         # Check if variable exists
         symbol = self.current_scope.lookup(var_name)
         if not symbol:
             raise SemanticError(f"Variable '{var_name}' not declared", line, column)
+        
+        var_type = symbol.data_type
+        print(f"Variable '{var_name}' has type '{var_type}'")
         
         # Check if this is a constant
         if symbol.is_constant:
@@ -2531,14 +2542,15 @@ class SemanticAnalyzer:
         self.advance()
         
         # Check which assignment operator is being used
-        token_type, token_value, line, column = self.get_current_token()
+        token_type, token_value, op_line, op_column = self.get_current_token()
+        print(f"Assignment operator: {token_type}")
         
         # Handle increment/decrement operators (++, --)
         if token_type in ['++', '--']:
             # These operators can only be applied to 'nt' variables
-            if symbol.data_type != 'nt':
-                raise SemanticError(f"Increment/decrement operators can only be applied to 'nt' variables, not '{symbol.data_type}'", 
-                                line, column)
+            if var_type != 'nt':
+                raise SemanticError(f"Increment/decrement operators can only be applied to 'nt' variables, not '{var_type}'", 
+                                op_line, op_column)
             
             self.advance()  # Move past the operator
             
@@ -2551,53 +2563,92 @@ class SemanticAnalyzer:
             symbol.initialized = True
             return
         
-        # Handle compound assignment operators (+=, -=, *=, /=)
-        if token_type in ['+=', '-=', '*=', '/=']:
-            # These operators can only be applied to 'nt' variables
-            if symbol.data_type != 'nt':
-                raise SemanticError(f"Compound assignment operators can only be applied to 'nt' variables, not '{symbol.data_type}'", 
-                                line, column)
+        # Handle compound assignment operators (+=, -=, *=, /=, %=)
+        if token_type in ['+=', '-=', '*=', '/=', '%=']:
+            print(f"Processing shortcut assignment operator '{token_type}'")
+            
+            # These operators require numeric operands for variable
+            if var_type not in ['nt', 'dbl']:
+                raise SemanticError(f"Shortcut assignment operator '{token_type}' can only be applied to numeric types, not '{var_type}'", 
+                                op_line, op_column)
             
             self.advance()  # Move past the operator
+            
+            # Save starting position for expression analysis
+            start_pos = self.current_token_index
+            
+            # Skip ahead to find the end of the expression (semicolon)
+            while (self.current_token_index < len(self.token_stream) and 
+                self.token_stream[self.current_token_index][0] != ';'):
+                self.advance()
+            
+            # Reset position to start of expression
+            end_pos = self.current_token_index
+            self.current_token_index = start_pos
+            
+            # Get the tokens being analyzed for debug
+            expr_tokens = self.token_stream[start_pos:end_pos]
+            expr_str = " ".join([f"{t[0]}('{t[1]}')" for t in expr_tokens])
+            print(f"Expression tokens: {expr_str}")
+            
+            # Analyze the expression on the right side of the shortcut assignment
+            expr_type = self.analyze_expression(end_pos)
+            print(f"Expression type: {expr_type}")
+            
+            # For shortcut assignments, the right operand must be a compatible numeric type
+            if expr_type not in ['nt', 'dbl']:
+                raise SemanticError(
+                    f"Type mismatch: Cannot use '{token_type}' with non-numeric type '{expr_type}'",
+                    op_line, op_column
+                )
+            
+            # Mark variable as initialized
+            symbol.initialized = True
+            
+            # Move past the semicolon
+            if self.get_current_token()[0] == ';':
+                self.advance()  # Move past the semicolon
+            return
         
         # Regular assignment (=)
         elif token_type == '=':
+            # ... (rest of your existing regular assignment code)
             self.advance()  # Move past the = operator
+            
+            # Save starting position for expression analysis
+            start_pos = self.current_token_index
+            
+            # Skip ahead to find the end of the expression (semicolon)
+            while (self.current_token_index < len(self.token_stream) and 
+                self.token_stream[self.current_token_index][0] != ';'):
+                self.advance()
+            
+            # Reset position to start of expression
+            end_pos = self.current_token_index
+            self.current_token_index = start_pos
+            
+            # Analyze the expression
+            expr_type = self.analyze_expression(end_pos)
+            
+            # Validate assignment compatibility - no implicit conversions in Conso
+            if var_type != expr_type:
+                # Special case: Boolean variable can be assigned result of relational expression
+                if var_type == 'bln' and expr_type == 'bln':
+                    # This is valid - a boolean variable can hold the result of a relational expression
+                    pass
+                else:
+                    raise SemanticError(
+                        f"Type mismatch: Cannot assign {expr_type} to {var_type}",
+                        op_line, op_column
+                    )
+            
+            symbol.initialized = True
+            
+            # Current position is now at the semicolon
+            if self.get_current_token()[0] == ';':
+                self.advance()  # Move past the semicolon
         else:
-            raise SemanticError(f"Expected assignment operator, got '{token_type}'", line, column)
-        
-        # Save starting position for expression analysis
-        start_pos = self.current_token_index
-        
-        # Skip ahead to find the end of the expression (semicolon)
-        while (self.current_token_index < len(self.token_stream) and 
-            self.token_stream[self.current_token_index][0] != ';'):
-            self.advance()
-        
-        # Reset position to start of expression
-        end_pos = self.current_token_index
-        self.current_token_index = start_pos
-        
-        # Analyze the expression
-        expr_type = self.analyze_expression(end_pos)
-        
-        # Validate assignment compatibility - no implicit conversions in Conso
-        if symbol.data_type != expr_type:
-            # Special case: Boolean variable can be assigned result of relational expression
-            if symbol.data_type == 'bln' and expr_type == 'bln':
-                # This is valid - a boolean variable can hold the result of a relational expression
-                pass
-            else:
-                raise SemanticError(
-                    f"Type mismatch: Cannot assign {expr_type} to {symbol.data_type}",
-                    line, column
-                )
-        
-        symbol.initialized = True
-        
-        # Current position is now at the semicolon
-        if self.get_current_token()[0] == ';':
-            self.advance()  # Move past the semicolon
+            raise SemanticError(f"Expected assignment operator, got '{token_type}'", op_line, op_column)
 
     def check_variable_usage(self, var_name, line, column):
         """Check if a variable used in an expression or function call is declared"""
@@ -3238,6 +3289,10 @@ class SemanticAnalyzer:
                 # Check for increment/decrement operations
                 if next_token and next_token[0] in ['++', '--']:
                     self.analyze_increment_operation()
+                # Check for shortcut assignments
+                elif next_token and next_token[0] in ['+=', '-=', '*=', '/=', '%=']:
+                    print(f"Found shortcut assignment {token_value} {next_token[0]}")
+                    self.analyze_assignment()
                 elif next_token and next_token[0] == '.':
                     self.analyze_struct_member_access()
                 elif next_token and next_token[0] == '(':
@@ -3249,7 +3304,7 @@ class SemanticAnalyzer:
                     while self.current_token_index < len(self.token_stream) and self.get_current_token()[0] != ';':
                         self.advance()
                     self.advance()  # Move past semicolon
-                elif next_token and next_token[0] in ['=', '+=', '-=', '*=', '/=']:
+                elif next_token and next_token[0] == '=':
                     self.analyze_assignment()
                 else:
                     self.check_variable_usage(token_value, line, column)
