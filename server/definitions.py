@@ -228,10 +228,10 @@ def add_all_set():
     add_set(["+", "-", "*", "/", "%"], "<arithmetic_nt_next>", ["<arithmetic_operator>", "<nt_math_val>", "<arithmetic_nt_next>"])
     add_set([",", ")", "]", ";"], "<arithmetic_nt_next>", ["null"])
     add_set(["[", "."], "<id_entity_next>", ["<id_next>"]) # di ko alam pano lalagay yung null sa first set ng <id_next>
-    add_set(["+", "-", "*", "/", "%", ",", ")", "]", ";", "&&", "||"], "<id_entity_next>", ["null"])
-    add_set(["+", "-", "*", "/", "%", ",", ")", "]", ";", "=", "+=", "-=", "*=", "/=", "&&", "||"], "<id_next>", ["null"]) # dalawa yung (,) comma sa follow set
+    add_set(["+", "-", "*", "/", "%", ",", ")", "]", ";", "&&", "||", "==", "!=", "<=", ">=", "<", ">"], "<id_entity_next>", ["null"])
+    add_set(["+", "-", "*", "/", "%", ",", ")", "]", ";", "=", "+=", "-=", "*=", "/=", "&&", "||", "==", "!=", "<=", ">=", "<", ">"], "<id_next>", ["null"]) # dalawa yung (,) comma sa follow set
     add_set(["ntlit", "~ntlit" "(", "++", "--", "id"], "<index>",["<arithmetic_nt>"])
-    add_set(["+", "-", "*", "/", "%", ",", ")", "]", ";", "=", "+=", "-=", "*=", "/=", "&&", "||"], "<index_next>", ["null"]) # dalawa yung (,) comma sa follow set
+    add_set(["+", "-", "*", "/", "%", ",", ")", "]", ";", "=", "+=", "-=", "*=", "/=", "&&", "||", "==", "!=", "<=", ">=", "<", ">"], "<index_next>", ["null"]) # dalawa yung (,) comma sa follow set
     add_set(["(", "dbllit", "~dbllit", "ntlit", "~ntlit", "++", "--", "id", "chrlit", "!", "strnglit", "blnlit"], "<arguments>", ["<args_value>", "<args_next>"])
     add_set([")"], "<arguments>", ["null"])
     add_set(["(", "dbllit", "~dbllit", "ntlit", "~ntlit", "++", "--", "id", "chrlit", "!", "strnglit", "blnlit"], "<args_value>", ["<expression>"])

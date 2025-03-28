@@ -13,13 +13,19 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background-color: #333333;
-  padding: 15px 20px; /* Increased padding to accommodate larger logo */
-  border-bottom: 1px solid #414141;
+  background-color: #252526;
+  padding: 0 10px;
+  border-bottom: 1px solid #333;
+}
+
+.app-logo {
+  height: 32px;
+  width: auto;
 }
 
 .app-title {
-  font-size: 28px; /* Increased font size to match larger logo */
+  font-family: 'Segoe UI', Arial, sans-serif;
+  font-size: 20px;
   font-weight: bold;
   color: white;
 }
@@ -30,46 +36,55 @@
 }
 
 .app-controls button {
-  background-color: #649ad1;
-  color: white;
   border: none;
-  padding: 10px 18px; /* Slightly larger buttons */
+  padding: 6px 12px;
   border-radius: 4px;
-  font-size: 15px; /* Slightly larger font */
   cursor: pointer;
+  color: white;
 }
 
-/* Add these new styles */
-.app-controls button.clear-button {
-  background-color: #f44336; /* Red */
+.app-controls button:not(.semantic-button, .clear-button) {
+  background-color: #0E639C;
 }
 
-.app-controls button.clear-button:hover {
-  background-color: #d32f2f; /* Darker red on hover */
+.app-controls .semantic-button {
+  background-color: #0d47a1;
 }
 
-.app-controls button.semantic-button {
-  background-color: #0d47a1; /* Dark blue */
-  color: #ffffff; /* White text */
-}
-
-.app-controls button.semantic-button:hover {
-  background-color: #1565c0; /* Slightly lighter blue on hover */
-}
-
-.app-controls button.semantic-button:disabled {
-  background-color: #555555;
-  color: #ffffff;
+.app-controls .semantic-button:disabled {
+  background-color: #444;
   cursor: not-allowed;
+  opacity: 0.7;
 }
 
-.app-controls button:hover {
-  background-color: #5a8ac0;
+.app-controls .clear-button {
+  background-color: #f44336;
 }
 
-.app-controls button:disabled {
-  background-color: #555555;
-  cursor: not-allowed;
+/* Sidebar styles */
+.sidebar {
+  user-select: none;
+}
+
+.file-item:hover {
+  background-color: #2a2d2e !important;
+}
+
+.file-item.active {
+  background-color: #37373d !important;
+}
+
+/* Adjust main content layout */
+.main-container {
+  display: flex;
+  height: calc(100vh - 75px); /* Adjust based on your header height */
+}
+
+.content-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* Main content */
@@ -213,6 +228,10 @@
 .file-name-input:hover {
   border-color: #555555;
 }
+
+
+
+
 
 
 
