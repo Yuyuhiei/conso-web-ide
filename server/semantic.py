@@ -368,7 +368,10 @@ class SemanticAnalyzer:
     def analyze_function_body(self, return_type):
         """Analyze the function body and check for return statements"""
         has_return = False
-
+        
+        # Save body start position for second pass if needed
+        body_start = self.current_token_index
+        
         # Save old context and ensure we're not in a loop or switch context
         old_in_loop = self.in_loop
         old_in_switch = self.in_switch
@@ -386,7 +389,7 @@ class SemanticAnalyzer:
             if token_type == '}':
                 self.advance()  # Move past '}'
                 break
-
+                
             # Check for direct break or continue at function level
             if token_type == 'brk':
                 raise SemanticError("Break statement cannot be used directly in a function body", line, column)
@@ -416,28 +419,28 @@ class SemanticAnalyzer:
                 has_return = True
                 self.analyze_return_statement(return_type, line, column)
                 continue
-
+                
             # Check for print statement
             if token_type == 'prnt':
                 print("Found print statement in function body - calling analyze_print_statement()")  # Debug
                 self.analyze_print_statement()
                 continue
-
+                
             # Handle conditional statements
             if token_type == 'f':
                 self.analyze_if_statement()
                 continue
-
+                
             # Handle switch statements
             if token_type == 'swtch':
                 self.analyze_switch_statement()
                 continue
-
+                
             # Handle for loops
             if token_type == 'fr':
                 self.analyze_for_loop()
                 continue
-
+                
             # Handle while loops
             if token_type == 'whl':
                 self.analyze_while_loop()
@@ -485,10 +488,47 @@ class SemanticAnalyzer:
             else:
                 self.advance()
         
+        # If we haven't found a return but need one (non-void function),
+        # do a more thorough scan of the function body
+        if not has_return and return_type != 'vd':
+            print("No return found in first pass, performing second linear scan")
+            # Save current position
+            current_pos = self.current_token_index
+            
+            # Reset to start of function body
+            self.current_token_index = body_start
+            
+            # Scan for any return statements in the function body
+            brace_level = 1  # We start inside the function body
+            while self.current_token_index < len(self.token_stream):
+                token = self.token_stream[self.current_token_index]
+                token_type, token_value, token_line, token_column = token
+                
+                # Track brace level to stay within function
+                if token_type == '{':
+                    brace_level += 1
+                elif token_type == '}':
+                    brace_level -= 1
+                    if brace_level == 0:
+                        # We've reached the end of the function
+                        break
+                
+                # Check for any return statements
+                if token_type == 'rtrn':
+                    print(f"Found return statement in second pass at line {token_line}, column {token_column}")
+                    has_return = True
+                    break
+                
+                self.current_token_index += 1
+            
+            # Restore original position
+            self.current_token_index = current_pos
+        
         # Restore old context
         self.in_loop = old_in_loop
         self.in_switch = old_in_switch
         
+        print(f"Function body analysis complete. Has return: {has_return}")
         return has_return
 
     def analyze_return_statement(self, function_return_type, line, column):
