@@ -114,7 +114,7 @@ class SemanticAnalyzer:
         self.string_concat_operator = {'`'}
         
         # Define built-in functions
-        self.built_in_functions = {'prnt', 'scan', 'len'}
+        self.built_in_functions = {'prnt', 'scan', 'len', 'npt'}
 
         # Add struct-related keywords
         self.struct_keywords = {'strct', 'dfstrct'}
@@ -526,12 +526,29 @@ class SemanticAnalyzer:
             
             # Process arguments and move past closing parenthesis
             arguments = self.parse_function_arguments()
+
+            # For npt function, return appropriate data type
+            if func_name == 'npt':
+                print("  Processing 'npt' input function")
+                # npt function with a string prompt returns a string by default
+                # The actual type conversion happens at runtime
+                result_type = 'strng'
+                
+                # Check if there's exactly one argument of type string
+                if len(arguments) != 1 or arguments[0] != 'strng':
+                    raise SemanticError(f"Input function 'npt' requires a single string prompt", line, column)
+                
+                # Check for semicolon after function call
+                if self.get_current_token()[0] == ';':
+                    self.advance()  # Move past semicolon
+                
+                return result_type
             
             # Check for semicolon after function call
             if self.get_current_token()[0] == ';':
                 self.advance()  # Move past semicolon
             
-            return None  # Built-in functions don't have a specific return type
+            return None if func_name != 'len' else 'nt' # len() returns an integer
         else:
             # First look in the global scope directly for functions
             func_symbol = self.global_scope.symbols.get(func_name)
@@ -2218,6 +2235,11 @@ class SemanticAnalyzer:
                     current_type = operand_type
                     expecting_operand = False
                     continue
+                elif token_type == 'npt':
+                    print(f"Found npt function in expression")
+                    # This is a built-in function for input
+                    # Use our function call analyzer which now handles npt
+                    operand_type = self.analyze_function_call()
                 else:
                     # Unknown token in expression
                     print(f"ERROR: Unexpected token '{token_type}' in expression")
@@ -2614,7 +2636,24 @@ class SemanticAnalyzer:
         elif token_type == '=':
             # ... (rest of your existing regular assignment code)
             self.advance()  # Move past the = operator
-            
+
+            # Check if this is an npt input statement directly    
+            next_token = self.get_current_token()
+            if next_token and next_token[0] == 'npt':
+                print(f"Found direct npt function call in assignment for variable '{var_name}'")
+                # Use our function call analyzer to process the npt function
+                expr_type = self.analyze_function_call()
+                
+                # npt function returns strng by default, but we'll allow type coercion
+                # Type conversion happens at runtime, so we'll just mark the variable as initialized
+                symbol.initialized = True
+                
+                # Current position is now at the semicolon
+                if self.get_current_token()[0] == ';':
+                    self.advance()  # Move past the semicolon
+                
+                return
+        
             # Save starting position for expression analysis
             start_pos = self.current_token_index
             
