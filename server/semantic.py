@@ -114,10 +114,15 @@ class SemanticAnalyzer:
         self.string_concat_operator = {'`'}
         
         # Define built-in functions
-        self.built_in_functions = {'prnt', 'scan', 'len'}
+        self.built_in_functions = {'prnt', 'scan', 'len', 'npt'}
 
         # Add struct-related keywords
         self.struct_keywords = {'strct', 'dfstrct'}
+
+        # Add these tracking flags
+        self.in_loop = False
+        self.in_switch = False
+        self.in_case_block = False  # New flag to track if we're inside a case/default block
 
     def print_symbol_tables(self):
         """Print all symbol tables in the current scope hierarchy"""
@@ -363,6 +368,12 @@ class SemanticAnalyzer:
     def analyze_function_body(self, return_type):
         """Analyze the function body and check for return statements"""
         has_return = False
+
+        # Save old context and ensure we're not in a loop or switch context
+        old_in_loop = self.in_loop
+        old_in_switch = self.in_switch
+        self.in_loop = False
+        self.in_switch = False
         
         # Process function body until we find closing brace
         while self.current_token_index < len(self.token_stream):
@@ -375,6 +386,13 @@ class SemanticAnalyzer:
             if token_type == '}':
                 self.advance()  # Move past '}'
                 break
+
+            # Check for direct break or continue at function level
+            if token_type == 'brk':
+                raise SemanticError("Break statement cannot be used directly in a function body", line, column)
+                
+            if token_type == 'cntn':
+                raise SemanticError("Continue statement cannot be used directly in a function body", line, column)
             
             # Check for struct member access (identifier followed by dot)
             if token_type == 'id':
@@ -386,6 +404,11 @@ class SemanticAnalyzer:
                 # Check for increment/decrement operators
                 elif next_token and next_token[0] in ['++', '--']:
                     self.analyze_increment_operation()
+                    continue
+                # Check for shortcut assignments
+                elif next_token and next_token[0] in ['+=', '-=', '*=', '/=', '%=']:
+                    print(f"Found shortcut assignment {token_value} {next_token[0]}")
+                    self.analyze_assignment()
                     continue
             
             # Check for return statement
@@ -462,6 +485,10 @@ class SemanticAnalyzer:
             else:
                 self.advance()
         
+        # Restore old context
+        self.in_loop = old_in_loop
+        self.in_switch = old_in_switch
+        
         return has_return
 
     def analyze_return_statement(self, function_return_type, line, column):
@@ -521,12 +548,29 @@ class SemanticAnalyzer:
             
             # Process arguments and move past closing parenthesis
             arguments = self.parse_function_arguments()
+
+            # For npt function, return appropriate data type
+            if func_name == 'npt':
+                print("  Processing 'npt' input function")
+                # npt function with a string prompt returns a string by default
+                # The actual type conversion happens at runtime
+                result_type = 'strng'
+                
+                # Check if there's exactly one argument of type string
+                if len(arguments) != 1 or arguments[0] != 'strng':
+                    raise SemanticError(f"Input function 'npt' requires a single string prompt", line, column)
+                
+                # Check for semicolon after function call
+                if self.get_current_token()[0] == ';':
+                    self.advance()  # Move past semicolon
+                
+                return result_type
             
             # Check for semicolon after function call
             if self.get_current_token()[0] == ';':
                 self.advance()  # Move past semicolon
             
-            return None  # Built-in functions don't have a specific return type
+            return None if func_name != 'len' else 'nt' # len() returns an integer
         else:
             # First look in the global scope directly for functions
             func_symbol = self.global_scope.symbols.get(func_name)
@@ -1001,12 +1045,22 @@ class SemanticAnalyzer:
         self.advance()  # Move past '{'
         
         print(f"Starting to process main function body in scope '{self.current_scope.scope_name}'")
+
+        # Save old context and ensure we're not in a loop or switch context
+        old_in_loop = self.in_loop
+        old_in_switch = self.in_switch
+        self.in_loop = False
+        self.in_switch = False
         
         # Process main function body
         self.analyze_function_body("vd")  # Main is void
         
         print(f"Finished processing main function body, returning to scope '{old_scope.scope_name}'")
         
+        # Restore old context
+        self.in_loop = old_in_loop
+        self.in_switch = old_in_switch
+
         # Restore original scope
         self.current_scope = old_scope
 
@@ -2213,6 +2267,11 @@ class SemanticAnalyzer:
                     current_type = operand_type
                     expecting_operand = False
                     continue
+                elif token_type == 'npt':
+                    print(f"Found npt function in expression")
+                    # This is a built-in function for input
+                    # Use our function call analyzer which now handles npt
+                    operand_type = self.analyze_function_call()
                 else:
                     # Unknown token in expression
                     print(f"ERROR: Unexpected token '{token_type}' in expression")
@@ -2515,13 +2574,19 @@ class SemanticAnalyzer:
         return declared_type == value_type
 
     def analyze_assignment(self):
-        """Analyze variable assignment"""
+        """Analyze variable assignment including shortcut assignment operators"""
         var_token_type, var_name, line, column = self.get_current_token()
+        
+        # Debug output
+        print(f"Analyzing assignment for variable '{var_name}' at line {line}, column {column}")
         
         # Check if variable exists
         symbol = self.current_scope.lookup(var_name)
         if not symbol:
             raise SemanticError(f"Variable '{var_name}' not declared", line, column)
+        
+        var_type = symbol.data_type
+        print(f"Variable '{var_name}' has type '{var_type}'")
         
         # Check if this is a constant
         if symbol.is_constant:
@@ -2531,14 +2596,15 @@ class SemanticAnalyzer:
         self.advance()
         
         # Check which assignment operator is being used
-        token_type, token_value, line, column = self.get_current_token()
+        token_type, token_value, op_line, op_column = self.get_current_token()
+        print(f"Assignment operator: {token_type}")
         
         # Handle increment/decrement operators (++, --)
         if token_type in ['++', '--']:
             # These operators can only be applied to 'nt' variables
-            if symbol.data_type != 'nt':
-                raise SemanticError(f"Increment/decrement operators can only be applied to 'nt' variables, not '{symbol.data_type}'", 
-                                line, column)
+            if var_type != 'nt':
+                raise SemanticError(f"Increment/decrement operators can only be applied to 'nt' variables, not '{var_type}'", 
+                                op_line, op_column)
             
             self.advance()  # Move past the operator
             
@@ -2551,53 +2617,109 @@ class SemanticAnalyzer:
             symbol.initialized = True
             return
         
-        # Handle compound assignment operators (+=, -=, *=, /=)
-        if token_type in ['+=', '-=', '*=', '/=']:
-            # These operators can only be applied to 'nt' variables
-            if symbol.data_type != 'nt':
-                raise SemanticError(f"Compound assignment operators can only be applied to 'nt' variables, not '{symbol.data_type}'", 
-                                line, column)
+        # Handle compound assignment operators (+=, -=, *=, /=, %=)
+        if token_type in ['+=', '-=', '*=', '/=', '%=']:
+            print(f"Processing shortcut assignment operator '{token_type}'")
+            
+            # These operators require numeric operands for variable
+            if var_type not in ['nt', 'dbl']:
+                raise SemanticError(f"Shortcut assignment operator '{token_type}' can only be applied to numeric types, not '{var_type}'", 
+                                op_line, op_column)
             
             self.advance()  # Move past the operator
+            
+            # Save starting position for expression analysis
+            start_pos = self.current_token_index
+            
+            # Skip ahead to find the end of the expression (semicolon)
+            while (self.current_token_index < len(self.token_stream) and 
+                self.token_stream[self.current_token_index][0] != ';'):
+                self.advance()
+            
+            # Reset position to start of expression
+            end_pos = self.current_token_index
+            self.current_token_index = start_pos
+            
+            # Get the tokens being analyzed for debug
+            expr_tokens = self.token_stream[start_pos:end_pos]
+            expr_str = " ".join([f"{t[0]}('{t[1]}')" for t in expr_tokens])
+            print(f"Expression tokens: {expr_str}")
+            
+            # Analyze the expression on the right side of the shortcut assignment
+            expr_type = self.analyze_expression(end_pos)
+            print(f"Expression type: {expr_type}")
+            
+            # For shortcut assignments, the right operand must be a compatible numeric type
+            if expr_type not in ['nt', 'dbl']:
+                raise SemanticError(
+                    f"Type mismatch: Cannot use '{token_type}' with non-numeric type '{expr_type}'",
+                    op_line, op_column
+                )
+            
+            # Mark variable as initialized
+            symbol.initialized = True
+            
+            # Move past the semicolon
+            if self.get_current_token()[0] == ';':
+                self.advance()  # Move past the semicolon
+            return
         
         # Regular assignment (=)
         elif token_type == '=':
+            # ... (rest of your existing regular assignment code)
             self.advance()  # Move past the = operator
+
+            # Check if this is an npt input statement directly    
+            next_token = self.get_current_token()
+            if next_token and next_token[0] == 'npt':
+                print(f"Found direct npt function call in assignment for variable '{var_name}'")
+                # Use our function call analyzer to process the npt function
+                expr_type = self.analyze_function_call()
+                
+                # npt function returns strng by default, but we'll allow type coercion
+                # Type conversion happens at runtime, so we'll just mark the variable as initialized
+                symbol.initialized = True
+                
+                # Current position is now at the semicolon
+                if self.get_current_token()[0] == ';':
+                    self.advance()  # Move past the semicolon
+                
+                return
+        
+            # Save starting position for expression analysis
+            start_pos = self.current_token_index
+            
+            # Skip ahead to find the end of the expression (semicolon)
+            while (self.current_token_index < len(self.token_stream) and 
+                self.token_stream[self.current_token_index][0] != ';'):
+                self.advance()
+            
+            # Reset position to start of expression
+            end_pos = self.current_token_index
+            self.current_token_index = start_pos
+            
+            # Analyze the expression
+            expr_type = self.analyze_expression(end_pos)
+            
+            # Validate assignment compatibility - no implicit conversions in Conso
+            if var_type != expr_type:
+                # Special case: Boolean variable can be assigned result of relational expression
+                if var_type == 'bln' and expr_type == 'bln':
+                    # This is valid - a boolean variable can hold the result of a relational expression
+                    pass
+                else:
+                    raise SemanticError(
+                        f"Type mismatch: Cannot assign {expr_type} to {var_type}",
+                        op_line, op_column
+                    )
+            
+            symbol.initialized = True
+            
+            # Current position is now at the semicolon
+            if self.get_current_token()[0] == ';':
+                self.advance()  # Move past the semicolon
         else:
-            raise SemanticError(f"Expected assignment operator, got '{token_type}'", line, column)
-        
-        # Save starting position for expression analysis
-        start_pos = self.current_token_index
-        
-        # Skip ahead to find the end of the expression (semicolon)
-        while (self.current_token_index < len(self.token_stream) and 
-            self.token_stream[self.current_token_index][0] != ';'):
-            self.advance()
-        
-        # Reset position to start of expression
-        end_pos = self.current_token_index
-        self.current_token_index = start_pos
-        
-        # Analyze the expression
-        expr_type = self.analyze_expression(end_pos)
-        
-        # Validate assignment compatibility - no implicit conversions in Conso
-        if symbol.data_type != expr_type:
-            # Special case: Boolean variable can be assigned result of relational expression
-            if symbol.data_type == 'bln' and expr_type == 'bln':
-                # This is valid - a boolean variable can hold the result of a relational expression
-                pass
-            else:
-                raise SemanticError(
-                    f"Type mismatch: Cannot assign {expr_type} to {symbol.data_type}",
-                    line, column
-                )
-        
-        symbol.initialized = True
-        
-        # Current position is now at the semicolon
-        if self.get_current_token()[0] == ';':
-            self.advance()  # Move past the semicolon
+            raise SemanticError(f"Expected assignment operator, got '{token_type}'", op_line, op_column)
 
     def check_variable_usage(self, var_name, line, column):
         """Check if a variable used in an expression or function call is declared"""
@@ -2848,6 +2970,23 @@ class SemanticAnalyzer:
             raise SemanticError(f"Expected '{{' to start switch body, got '{token_type}'", line, column)
         
         self.advance()  # Move past '{'
+
+        old_in_switch = self.in_switch
+        old_in_case_block = self.in_case_block # Save old case block state too
+        self.in_switch = True
+        self.in_case_block = False # Initially not in a case block
+        
+        # Existing code for creating a new scope
+        switch_scope = SymbolTable(parent=self.current_scope, scope_name="switch block")
+        original_scope = self.current_scope
+        self.current_scope = switch_scope
+    
+        
+        # Just before you restore the original scope at the end of the method, add this:
+        self.in_switch = old_in_switch
+        
+        # Existing code to restore scope
+        self.current_scope = original_scope
         
         # Create a new scope for the switch body
         switch_scope = SymbolTable(parent=self.current_scope, scope_name="switch block")
@@ -2871,6 +3010,7 @@ class SemanticAnalyzer:
             
             # Handle case statement
             if token_type == 'cs':
+                self.in_case_block = True
                 if not found_break:
                     raise SemanticError(f"Missing 'brk' statement before new case", line, column)
                 
@@ -2917,6 +3057,11 @@ class SemanticAnalyzer:
                 # Skip through the case body to find the break
                 while self.current_token_index < len(self.token_stream):
                     current_token = self.get_current_token()[0]
+                     # Check for continue statement
+                    if current_token == 'cntn':
+                        raise SemanticError("Continue statement cannot be used in a switch statement", 
+                                        self.get_current_token()[2], self.get_current_token()[3])
+                    
                     if current_token == 'brk':
                         found_break = True
                         self.advance()  # Move past 'brk'
@@ -2996,6 +3141,7 @@ class SemanticAnalyzer:
             
             # Handle default case
             elif token_type == 'dflt':
+                self.in_case_block = True
                 if not found_break:
                     raise SemanticError(f"Missing 'brk' statement before default case", line, column)
                 
@@ -3021,6 +3167,11 @@ class SemanticAnalyzer:
                 # Skip through the default body to find the break
                 while self.current_token_index < len(self.token_stream):
                     current_token = self.get_current_token()[0]
+                    # Check for continue statement
+                    if current_token == 'cntn':
+                        raise SemanticError("Continue statement cannot be used in a switch statement", 
+                                        self.get_current_token()[2], self.get_current_token()[3])
+                    
                     if current_token == 'brk':
                         found_break = True
                         self.advance()  # Move past 'brk'
@@ -3093,11 +3244,16 @@ class SemanticAnalyzer:
                             self.advance()
                     else:
                         self.advance()
+            elif token_type == 'brk' and not self.in_case_block:
+                raise SemanticError("Break statement in switch must appear within a case or default block", 
+                                line, column)
             else:
                 # Unexpected token in switch statement
                 self.advance()  # Skip unexpected tokens to avoid infinite loops
         
-        # Restore original scope
+        # Restore original flags and scope
+        self.in_switch = old_in_switch
+        self.in_case_block = old_in_case_block
         self.current_scope = original_scope
 
     def analyze_case_body(self):
@@ -3196,6 +3352,39 @@ class SemanticAnalyzer:
             if token_type == '}':
                 self.advance()  # Move past '}'
                 break
+
+            # Add special handling for break and continue
+            if token_type == 'brk':
+                if self.in_loop:
+                    # Break in a loop is always fine
+                    self.analyze_break_statement()
+                    continue
+                elif self.in_switch and self.in_case_block:
+                    # Break in a switch is only fine if inside a case/default block
+                    self.analyze_break_statement()
+                    continue
+                elif self.in_switch:
+                    # Break in a switch but not in a case block
+                    raise SemanticError("Break statement in switch must appear within a case or default block", 
+                                    line, column)
+                else:
+                    # Not in a loop or switch
+                    raise SemanticError("Break statement can only be used inside a loop or switch statement", 
+                                    line, column)
+                
+            if token_type == 'cntn':
+                if self.in_switch and not self.in_loop:
+                    # Continue inside switch but not inside a loop
+                    raise SemanticError("Continue statement cannot be used in a switch statement", 
+                                    line, column)
+                elif not self.in_loop:
+                    # Not in a loop
+                    raise SemanticError("Continue statement can only be used inside a loop", 
+                                    line, column)
+                else:
+                    # Inside a loop, continue is fine
+                    self.analyze_continue_statement()
+                    continue
             
             # Handle all statement types
             if token_type == 'f':
@@ -3238,6 +3427,10 @@ class SemanticAnalyzer:
                 # Check for increment/decrement operations
                 if next_token and next_token[0] in ['++', '--']:
                     self.analyze_increment_operation()
+                # Check for shortcut assignments
+                elif next_token and next_token[0] in ['+=', '-=', '*=', '/=', '%=']:
+                    print(f"Found shortcut assignment {token_value} {next_token[0]}")
+                    self.analyze_assignment()
                 elif next_token and next_token[0] == '.':
                     self.analyze_struct_member_access()
                 elif next_token and next_token[0] == '(':
@@ -3249,7 +3442,7 @@ class SemanticAnalyzer:
                     while self.current_token_index < len(self.token_stream) and self.get_current_token()[0] != ';':
                         self.advance()
                     self.advance()  # Move past semicolon
-                elif next_token and next_token[0] in ['=', '+=', '-=', '*=', '/=']:
+                elif next_token and next_token[0] == '=':
                     self.analyze_assignment()
                 else:
                     self.check_variable_usage(token_value, line, column)
@@ -3542,6 +3735,22 @@ class SemanticAnalyzer:
             raise SemanticError(f"Expected '{{' to start for loop body, got '{token_type}'", line, column)
         
         self.advance()  # Move past '{'
+
+         # ADD THE LOOP FLAG CODE HERE, just before creating the new scope:
+        old_in_loop = self.in_loop
+        self.in_loop = True
+        
+        # Create a new scope for the loop body
+        loop_scope = SymbolTable(parent=self.current_scope, scope_name="for loop block")
+        original_scope = self.current_scope
+        self.current_scope = loop_scope
+        
+        # Process loop body statements
+        self.analyze_block_statements()
+        
+        # Restore original flags and scope
+        self.in_loop = old_in_loop
+        self.current_scope = original_scope
         
         # Create a new scope for the loop body
         loop_scope = SymbolTable(parent=self.current_scope, scope_name="for loop block")
@@ -3611,6 +3820,23 @@ class SemanticAnalyzer:
             raise SemanticError(f"Expected '{{' to start 'whl' body, got '{token_type}'", line, column)
         
         self.advance()  # Move past '{'
+
+        old_in_loop = self.in_loop
+        self.in_loop = True
+        
+        # Existing code for creating a new scope
+        while_scope = SymbolTable(parent=self.current_scope, scope_name="while block")
+        original_scope = self.current_scope
+        self.current_scope = while_scope
+        
+        # Process while-body statements
+        self.analyze_block_statements()
+        
+        # Just before you restore the original scope, add this:
+        self.in_loop = old_in_loop
+        
+        # Existing code to restore scope
+        self.current_scope = original_scope
         
         # Create a new scope for the while-body
         while_scope = SymbolTable(parent=self.current_scope, scope_name="while block")
@@ -3637,6 +3863,23 @@ class SemanticAnalyzer:
             raise SemanticError(f"Expected '{{' to start 'd' body, got '{token_type}'", line, column)
         
         self.advance()  # Move past '{'
+
+        old_in_loop = self.in_loop
+        self.in_loop = True
+        
+        # Existing code for creating a new scope
+        do_scope = SymbolTable(parent=self.current_scope, scope_name="do-while block")
+        original_scope = self.current_scope
+        self.current_scope = do_scope
+        
+        # Process do-body statements
+        self.analyze_block_statements()
+        
+        # Just before you restore the original scope, add this:
+        self.in_loop = old_in_loop
+        
+        # Existing code to restore scope
+        self.current_scope = original_scope
         
         # Create a new scope for the do-body
         do_scope = SymbolTable(parent=self.current_scope, scope_name="do-while block")
@@ -3840,6 +4083,36 @@ class SemanticAnalyzer:
         
         self.advance()  # Skip ';'
         print("Print statement analysis completed successfully")  # Debug output
+
+    def analyze_break_statement(self):
+        """Analyze a break statement"""
+        token_type, token_value, line, column = self.get_current_token()
+        if token_type != 'brk':
+            raise SemanticError(f"Expected 'brk' keyword, got '{token_type}'", line, column)
+        
+        self.advance()  # Move past 'brk'
+        
+        # Check for semicolon
+        token_type, token_value, line, column = self.get_current_token()
+        if token_type != ';':
+            raise SemanticError(f"Expected ';' after 'brk', got '{token_type}'", line, column)
+        
+        self.advance()  # Move past ';'
+
+    def analyze_continue_statement(self):
+        """Analyze a continue statement"""
+        token_type, token_value, line, column = self.get_current_token()
+        if token_type != 'cntn':
+            raise SemanticError(f"Expected 'cntn' keyword, got '{token_type}'", line, column)
+        
+        self.advance()  # Move past 'cntn'
+        
+        # Check for semicolon
+        token_type, token_value, line, column = self.get_current_token()
+        if token_type != ';':
+            raise SemanticError(f"Expected ';' after 'cntn', got '{token_type}'", line, column)
+        
+        self.advance()  # Move past ';'
 
     def advance(self):
         """Move to the next token"""
