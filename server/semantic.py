@@ -535,6 +535,19 @@ class SemanticAnalyzer:
         """Analyze a return statement and ensure it matches the function's return type"""
         self.advance()  # Move past 'rtrn'
         
+        # Check if we're in the main function
+        current_function = None
+        temp_scope = self.current_scope
+        while temp_scope:
+            if temp_scope.scope_name.startswith("function "):
+                current_function = temp_scope.scope_name[len("function "):]
+                break
+            temp_scope = temp_scope.parent
+        
+        # No return statements allowed in main function
+        if current_function == "mn":
+            raise SemanticError("Return statements are not allowed in the main function", line, column)
+    
         # Get the next token to determine if there's a return expression
         token_type, token_value, token_line, token_column = self.get_current_token()
         
@@ -668,9 +681,42 @@ class SemanticAnalyzer:
         
         # Process arguments
         while True:
-            # Parse the current argument
-            arg_type = self.parse_function_argument()
+            # Find the end of this argument
+            arg_start = self.current_token_index
+            paren_level = 0
+            bracket_level = 0
+            
+            # Continue until we find a comma or closing parenthesis at the top level
+            while self.current_token_index < len(self.token_stream):
+                token_type = self.token_stream[self.current_token_index][0]
+                
+                if token_type == '(':
+                    paren_level += 1
+                elif token_type == ')':
+                    if paren_level == 0:
+                        # End of all arguments
+                        break
+                    paren_level -= 1
+                elif token_type == '[':
+                    bracket_level += 1
+                elif token_type == ']':
+                    bracket_level -= 1
+                elif token_type == ',' and paren_level == 0 and bracket_level == 0:
+                    # End of current argument
+                    break
+                    
+                self.current_token_index += 1
+            
+            # Reset to the start of the argument
+            arg_end = self.current_token_index
+            self.current_token_index = arg_start
+            
+            # Parse the current argument expression
+            arg_type = self.analyze_expression(arg_end)
             argument_types.append(arg_type)
+            
+            # Now at the end of the argument
+            self.current_token_index = arg_end
             
             # Check for comma or closing parenthesis
             if self.get_current_token()[0] == ',':
@@ -751,9 +797,30 @@ class SemanticAnalyzer:
             self.advance()  # Skip closing parenthesis
             return expr_type
         else:
-            # Try to parse it as a general expression
-            while (self.current_token_index < len(self.token_stream) and
-                self.get_current_token()[0] not in [',', ')']):
+            # IMPROVED: Handle general expressions with proper nesting
+            # Find the end of this argument considering nested parentheses/brackets
+            paren_level = 0
+            bracket_level = 0
+            
+            # Continue until we find a comma or closing parenthesis at the top level
+            while self.current_token_index < len(self.token_stream):
+                current_token = self.get_current_token()[0]
+                
+                if current_token == '(':
+                    paren_level += 1
+                elif current_token == ')':
+                    if paren_level == 0:
+                        # End of all arguments
+                        break
+                    paren_level -= 1
+                elif current_token == '[':
+                    bracket_level += 1
+                elif current_token == ']':
+                    bracket_level -= 1
+                elif current_token == ',' and paren_level == 0 and bracket_level == 0:
+                    # End of current argument
+                    break
+                    
                 self.advance()
             
             # Analyze the expression
@@ -3507,55 +3574,46 @@ class SemanticAnalyzer:
                 break
             temp_scope = temp_scope.parent
         
+        # No return statements allowed in main function
         if current_function == "mn":
-            # In main function, only allow 'rtrn 1;'
-            token_type, token_value, line, column = self.get_current_token()
-            if token_type != 'ntlit' or token_value != '1':
-                raise SemanticError(f"Only 'rtrn 1;' is allowed in main function", line, column)
-            self.advance()  # Move past '1'
-            
-            # Check for semicolon
-            token_type, token_value, line, column = self.get_current_token()
-            if token_type != ';':
-                raise SemanticError(f"Expected ';' after 'rtrn 1', got '{token_type}'", line, column)
-            self.advance()  # Move past ';'
-        else:
-            # For other functions, we need to check against the function's return type
-            # For this, we need to know the function's return type
-            # We can get this from the function symbol in the global scope
-            if current_function:
-                func_symbol = self.global_scope.lookup(current_function)
-                if func_symbol and func_symbol.type == 'function':
-                    return_type = func_symbol.data_type
+            raise SemanticError("Return statements are not allowed in the main function", line, column)
+        
+        # For other functions, we need to check against the function's return type
+        # For this, we need to know the function's return type
+        # We can get this from the function symbol in the global scope
+        if current_function:
+            func_symbol = self.global_scope.lookup(current_function)
+            if func_symbol and func_symbol.type == 'function':
+                return_type = func_symbol.data_type
+                
+                # For void functions, there should be no return value
+                if return_type == 'vd':
+                    token_type, token_value, line, column = self.get_current_token()
+                    if token_type != ';':
+                        raise SemanticError(f"Void function cannot return a value", line, column)
+                    self.advance()  # Move past ';'
+                else:
+                    # For non-void functions, analyze the return expression
+                    start_pos = self.current_token_index
                     
-                    # For void functions, there should be no return value
-                    if return_type == 'vd':
-                        token_type, token_value, line, column = self.get_current_token()
-                        if token_type != ';':
-                            raise SemanticError(f"Void function cannot return a value", line, column)
-                        self.advance()  # Move past ';'
-                    else:
-                        # For non-void functions, analyze the return expression
-                        start_pos = self.current_token_index
-                        
-                        # Find the end of the return expression (semicolon)
-                        while self.current_token_index < len(self.token_stream) and self.token_stream[self.current_token_index][0] != ';':
-                            self.advance()
-                        
-                        end_pos = self.current_token_index
-                        self.current_token_index = start_pos
-                        
-                        # Analyze the expression
-                        expr_type = self.analyze_expression(end_pos)
-                        
-                        # Check if return type matches function return type
-                        if expr_type != return_type:
-                            raise SemanticError(f"Return type mismatch: expected '{return_type}', got '{expr_type}'", line, column)
-                        
-                        # Move past the semicolon
-                        self.advance()  # Move to semicolon
-                        if self.get_current_token()[0] == ';':
-                            self.advance()  # Move past semicolon
+                    # Find the end of the return expression (semicolon)
+                    while self.current_token_index < len(self.token_stream) and self.token_stream[self.current_token_index][0] != ';':
+                        self.advance()
+                    
+                    end_pos = self.current_token_index
+                    self.current_token_index = start_pos
+                    
+                    # Analyze the expression
+                    expr_type = self.analyze_expression(end_pos)
+                    
+                    # Check if return type matches function return type
+                    if expr_type != return_type:
+                        raise SemanticError(f"Return type mismatch: expected '{return_type}', got '{expr_type}'", line, column)
+                    
+                    # Move past the semicolon
+                    self.advance()  # Move to semicolon
+                    if self.get_current_token()[0] == ';':
+                        self.advance()  # Move past semicolon
 
     def analyze_for_loop(self):
         """Analyze a for loop (fr statement in Conso)"""
