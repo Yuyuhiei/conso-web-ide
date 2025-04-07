@@ -2619,6 +2619,20 @@ class SemanticAnalyzer:
             # Handle operators
             else:
                 if token_type in self.arithmetic_operators:
+                    # Division by zero check
+                    if token_type == '/':
+                        # Check if the next token is a literal zero
+                        next_token_index = self.current_token_index + 1
+                        if next_token_index < len(self.token_stream):
+                            next_token = self.token_stream[next_token_index]
+                            next_type, next_value, next_line, next_column = next_token
+                            
+                            # Check for literal zero
+                            if next_type == 'ntlit' and next_value == '0':
+                                raise SemanticError("Division by zero", next_line, next_column)
+                            elif next_type == 'dbllit' and float(next_value) == 0.0:
+                                raise SemanticError("Division by zero", next_line, next_column)
+                        
                     # Verify current type supports arithmetic
                     if current_type not in ['nt', 'dbl']:
                         print(f"ERROR: Cannot apply arithmetic operator '{token_type}' to '{current_type}'")
