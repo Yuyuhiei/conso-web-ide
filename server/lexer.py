@@ -4,6 +4,9 @@ class LexerError(Exception):
         self.line = line
         self.column = column
 
+    def __str__(self):
+        return f"Lexical Error at line {self.line}, column {self.column}: {self.message}"
+
 # Token Types
 TT_NPT = 'npt'
 TT_PRNT = 'prnt'
@@ -78,6 +81,8 @@ TT_NEGDOUBLELIT = '~dbllit'
 TT_STRINGLIT = 'strnglit'
 TT_CHARLIT = 'chrlit'
 TT_STRCTACCESS = '.'
+
+# Token categories (for checking valid token sequences)
 TC_FUNC = 1
 TC_MAIN = 2
 TC_USERFUNC = 3
@@ -123,36 +128,36 @@ UPALPHA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 ALPHA = LOWALPHA + UPALPHA
 ALPHA_NUMERIC = ALPHA + DIGITZERO
 
+# Redefine DELIMITERS without spaces and whitespace
 DELIMITERS = {
-'del1': {' '},
-'del2': {';'},
-'del3': {' ', '{'},
-'del4': {':',},
-'del5': {' ', '('},
-'del6': {' ', ';', ',', '=', '>', '<', '!', '}', ')'},
-'del7': {'('},
-'del8': {' ', ';'},
-'del9': set(ALPHA + '(' + ',' + ';' + ')' + ' '),
-'del10': {' ', ';', ')'},
-'del11': {' ', '\n'},
-'del12': set(ALPHA + DIGITZERO + ']' + '~'),
-'del13': {' ', ';', ')', '['},
-'del14': set(ALPHA + DIGITZERO + ' ' + '\n' + '"' + "'" + '{'),
-'del15': {' ', '\n', ';', '}', ','},
-'del16': set(ALPHA_NUMERIC + ')' + '"' + '!' + '(' + '[' + '' + '\''),
-'del17': {' ', '}', ';', ',', '+', '-', '*', '/', '%', '=' , '>', '<', '!', '&', '|'},
-'del18': {' ', ';', '{', ')', '&', '|', '+', '-', '*', '/', '%'},
-'del19': {' ', ';', ',', '}', ')', '=', '>', '<', '!'},
-'del20': set(ALPHA + DIGITZERO + ' ' + '"' + "'" + '{'),
-'del21': set(DIGIT),
-'del22': {' ', ',', ';', '(', ')', '{', '[', ']'}, 
-'del23': {' ', ';', ',', '}', ']', ')', ':', '+', '-', '*', '/', '%', '=' , '>', '<', '!', '&', '|'},
-'del24': set(' ' + DIGITZERO + ALPHA + '~' + '('),
-'del25': set(' ' + DIGITZERO + ALPHA + '~' + '"' + "'"),
-'del26': {' ', ';', ',', '}', ')', '=', '>', '<', '!', ':'},
-'del27': {' ', '"'}
+    'del1': {';', '{', '('},  # Removed space
+    'del2': {';'},
+    'del3': {'{'},  # Removed space
+    'del4': {':'},
+    'del5': {'('},  # Removed space
+    'del6': {';', ',', '=', '>', '<', '!', '}', ')'},  # Removed space
+    'del7': {'('},
+    'del8': {';'},  # Removed space
+    'del9': set(ALPHA + '(' + ',' + ';' + ')'),  # Removed space
+    'del10': {';', ')'},  # Removed space
+    'del11': {'\n'},  # Removed space
+    'del12': set(ALPHA + DIGITZERO + ']' + '~'),
+    'del13': {';', ')', '['},  # Removed space
+    'del14': set(ALPHA + DIGITZERO + '"' + "'" + '{'),  # Removed space and newline
+    'del15': {'\n', ';', '}', ','},  # Removed space
+    'del16': set(ALPHA_NUMERIC + ')' + '"' + '!' + '(' + '[' + '\''),
+    'del17': {'}', ';', ',', '+', '-', '*', '/', '%', '=', '>', '<', '!', '&', '|'},  # Removed space
+    'del18': {';', '{', ')', '&', '|', '+', '-', '*', '/', '%'},  # Removed space
+    'del19': {';', ',', '}', ')', '=', '>', '<', '!'},  # Removed space
+    'del20': set(ALPHA + DIGITZERO + '"' + "'" + '{'),  # Removed space
+    'del21': set(DIGIT),
+    'del22': {',', ';', '(', ')', '{', '[', ']'},  # Removed space
+    'del23': {';', ',', '}', ']', ')', ':', '+', '-', '*', '/', '%', '=', '>', '<', '!', '&', '|'},  # Removed space
+    'del24': set(DIGITZERO + ALPHA + '~' + '('),  # Removed space
+    'del25': set(DIGITZERO + ALPHA + '~' + '"' + "'"),  # Removed space
+    'del26': {';', ',', '}', ')', '=', '>', '<', '!', ':'},  # Removed space
+    'del27': {'"'}  # Removed space
 }
-
 
 # Token Class
 class Token:
@@ -293,6 +298,12 @@ class Lexer:
         if self.pos + 1 < len(self.text):
             return self.text[self.pos + 1]
         return None
+        
+    def peek_n_chars(self, n):
+        """Look ahead n characters without advancing the position"""
+        if self.pos + n < len(self.text):
+            return self.text[self.pos + n]
+        return None
 
     def make_char(self):
         start_line = self.line
@@ -333,6 +344,11 @@ class Lexer:
         
         if self.current_char == '\n':
             self.advance()
+            
+    def skip_whitespace(self):
+        """Skip any whitespace characters (space, tab, newline)"""
+        while self.current_char is not None and self.current_char.isspace():
+            self.advance()
 
     def make_tokens(self):
         tokens = []
@@ -344,12 +360,14 @@ class Lexer:
             while self.current_char is not None:
                 start_line = self.line
                 start_column = self.column
-                            
-                if self.current_char in ' \t\n':  # Skip whitespace TODO: fix? why is it not skipping whitespace? FIXED: it skips the checks on whitespace, confusing the code above.
-                    self.advance()
+                
+                # Skip whitespace - ignore spaces and tabs
+                if self.current_char.isspace():
+                    self.skip_whitespace()
                     continue
 
-                if self.current_char == '#':  # Check for comments
+                # Skip comments
+                if self.current_char == '#':
                     self.skip_comment()
                     continue
 
@@ -365,155 +383,236 @@ class Lexer:
                         errors.append(error)
                     else:
                         tokens.append(token)
+                # Similar logic for plus signs
                 elif self.current_char == '+':
-                    if self.next_char() == '+':  # Check for '++'
-                        self.advance()
-                        self.advance()
-                        current_line = self.line
-                        current_column = self.column
-
-                        tokens.append(Token(TT_INCREMENT, '++', current_line, current_column))
+                    # Handle complex sequences with plus/increment
+                    if self.next_char() == '+':
+                        # Count how many consecutive plus signs we have
+                        plus_count = 2  # We already know we have at least '++'
+                        pos = self.pos + 2
+                        while pos < len(self.text) and self.text[pos] == '+':
+                            plus_count += 1
+                            pos += 1
+                        
+                        # Special pattern handling based on the total count
+                        if plus_count == 2:
+                            # Simple increment operator
+                            self.advance()
+                            self.advance()
+                            tokens.append(Token(TT_INCREMENT, '++', start_line, start_column))
+                        elif plus_count == 3:
+                            # +++ becomes ++ +
+                            self.advance()
+                            self.advance()
+                            tokens.append(Token(TT_INCREMENT, '++', start_line, start_column))
+                            tokens.append(Token(TT_PLUS, '+', self.line, self.column))
+                            self.advance()
+                        elif plus_count == 5:
+                            # +++++ becomes ++ + ++
+                            # First increment
+                            self.advance()
+                            self.advance()
+                            tokens.append(Token(TT_INCREMENT, '++', start_line, start_column))
+                            
+                            # Middle plus
+                            tokens.append(Token(TT_PLUS, '+', self.line, self.column))
+                            self.advance()
+                            
+                            # Second increment
+                            start_line = self.line
+                            start_column = self.column
+                            self.advance()
+                            self.advance()
+                            tokens.append(Token(TT_INCREMENT, '++', start_line, start_column))
+                        else:
+                            # For any other pattern, tokenize two characters at a time from left to right
+                            # This handles cases like ++++ (++ ++) or ++++++ (++ ++ ++)
+                            remaining = plus_count
+                            while remaining >= 2:
+                                # Create ++ token
+                                self.advance()
+                                self.advance()
+                                tokens.append(Token(TT_INCREMENT, '++', start_line, start_column))
+                                start_line = self.line
+                                start_column = self.column
+                                remaining -= 2
+                            
+                            # If there's one remaining, it's a single plus
+                            if remaining == 1:
+                                tokens.append(Token(TT_PLUS, '+', self.line, self.column))
+                                self.advance()
+                    # Check for += (plus-equals)
                     elif self.next_char() == '=':
                         self.advance()
                         self.advance()
-                        current_line = self.line
-                        current_column = self.column
-
-                        tokens.append(Token(TT_PLUSEQ, '+=', current_line, current_column))
+                        tokens.append(Token(TT_PLUSEQ, '+=', start_line, start_column))
+                    # Otherwise it's just a + (plus)
                     else:
-                        tokens.append(Token(TT_PLUS, '+', self.line, self.column))
+                        tokens.append(Token(TT_PLUS, '+', start_line, start_column))
                         self.advance()
+                # Corrected logic for handling minus signs
                 elif self.current_char == '-':
-                    if self.next_char() == '-':  # Check for '--'
-                        self.advance()
-                        self.advance()
-                        current_line = self.line
-                        current_column = self.column
-
-                        tokens.append(Token(TT_DECREMENT, '--', current_line, current_column))
+                    # Handle complex sequences with minus/decrement
+                    if self.next_char() == '-':
+                        # First, count how many consecutive minus signs we have
+                        minus_count = 2  # We already know we have at least '--'
+                        pos = self.pos + 2
+                        while pos < len(self.text) and self.text[pos] == '-':
+                            minus_count += 1
+                            pos += 1
+                        
+                        # Special pattern handling based on the total count
+                        if minus_count == 2:
+                            # Simple decrement operator
+                            self.advance()
+                            self.advance()
+                            tokens.append(Token(TT_DECREMENT, '--', start_line, start_column))
+                        elif minus_count == 3:
+                            # --- becomes -- -
+                            self.advance()
+                            self.advance()
+                            tokens.append(Token(TT_DECREMENT, '--', start_line, start_column))
+                            tokens.append(Token(TT_MINUS, '-', self.line, self.column))
+                            self.advance()
+                        elif minus_count == 5:
+                            # ----- becomes -- - --
+                            # First decrement
+                            self.advance()
+                            self.advance()
+                            tokens.append(Token(TT_DECREMENT, '--', start_line, start_column))
+                            
+                            # Middle minus
+                            tokens.append(Token(TT_MINUS, '-', self.line, self.column))
+                            self.advance()
+                            
+                            # Second decrement
+                            start_line = self.line
+                            start_column = self.column
+                            self.advance()
+                            self.advance()
+                            tokens.append(Token(TT_DECREMENT, '--', start_line, start_column))
+                        else:
+                            # For any other pattern, tokenize two characters at a time from left to right
+                            # This handles cases like ---- (-- --) or ------ (-- -- --)
+                            remaining = minus_count
+                            while remaining >= 2:
+                                # Create -- token
+                                self.advance()
+                                self.advance()
+                                tokens.append(Token(TT_DECREMENT, '--', start_line, start_column))
+                                start_line = self.line
+                                start_column = self.column
+                                remaining -= 2
+                            
+                            # If there's one remaining, it's a single minus
+                            if remaining == 1:
+                                tokens.append(Token(TT_MINUS, '-', self.line, self.column))
+                                self.advance()
+                    # Check for -= (minus-equals)
                     elif self.next_char() == '=':
                         self.advance()
                         self.advance()
-                        current_line = self.line
-                        current_column = self.column
-
-                        tokens.append(Token(TT_MINUSEQ, '-=', current_line, current_column))
+                        tokens.append(Token(TT_MINUSEQ, '-=', start_line, start_column))
+                    # Otherwise it's just a - (minus)
                     else:
-                        tokens.append(Token(TT_MINUS, '-', self.line, self.column))
+                        tokens.append(Token(TT_MINUS, '-', start_line, start_column))
                         self.advance()
                 elif self.current_char == '&':
                     if self.next_char() == '&':
                         self.advance()
                         self.advance()
-                        current_line = self.line
-                        current_column = self.column
-
-                        tokens.append(Token(TT_AND, '&&', current_line, current_column))
+                        tokens.append(Token(TT_AND, '&&', start_line, start_column))
                     else:
-                        errors.append(LexerError(f"Illegal character: {self.current_char}", self.line, self.column))
+                        errors.append(LexerError(f"Illegal character: {self.current_char}", start_line, start_column))
                         self.advance()
                 elif self.current_char == '|':
                     if self.next_char() == '|':
                         self.advance()
                         self.advance()
-                        current_line = self.line
-                        current_column = self.column
-
-                        tokens.append(Token(TT_OR, '||', current_line, current_column))
+                        tokens.append(Token(TT_OR, '||', start_line, start_column))
                     else:
-                        errors.append(LexerError(f"Illegal character: {self.current_char}", self.line, self.column))
+                        errors.append(LexerError(f"Illegal character: {self.current_char}", start_line, start_column))
                         self.advance()
                 elif self.current_char == '<':
                     if self.next_char() == '=':
-                        current_line = self.line
-                        current_column = self.column
                         self.advance()
-                        tokens.append(Token(TT_LTEQ, '<=', current_line, current_column))
+                        self.advance()
+                        tokens.append(Token(TT_LTEQ, '<=', start_line, start_column))
                     else:
-                        tokens.append(Token(TT_LT, '<', self.line, self.column))
-                    self.advance()
+                        tokens.append(Token(TT_LT, '<', start_line, start_column))
+                        self.advance()
                 elif self.current_char == '>':
                     if self.next_char() == '=':
-                        current_line = self.line
-                        current_column = self.column
                         self.advance()
-                        tokens.append(Token(TT_GTEQ, '>=', current_line, current_column))
+                        self.advance()
+                        tokens.append(Token(TT_GTEQ, '>=', start_line, start_column))
                     else:
-                        tokens.append(Token(TT_GT, '>', self.line, self.column))
-                    self.advance()
-                # # Handle invalid operator case (example: invalid operator `@`)
-                # elif self.current_char not in ['+', '-', '*', '/', '%', '=', '(', ')', '{', '}', '[', ']', ';', ',', ':', '&', '|', '!', '^', '~', '', '"', "'", '>', '<', ':']:
-                #     return [tokens, LexerError(f"Invalid operator: {self.current_char}", self.line, self.column)]
-                # Handle multiplication (*)
+                        tokens.append(Token(TT_GT, '>', start_line, start_column))
+                        self.advance()
                 elif self.current_char == '*':
                     if self.next_char() == '*':
                         self.advance()
-                        tokens.append(Token(TT_EXP, '**'))  # Include lexeme
-                    elif self.next_char() == '=':
-                        current_line = self.line
-                        current_column = self.column
                         self.advance()
-                        tokens.append(Token(TT_MULTIEQ, '*=', current_line, current_column))
+                        tokens.append(Token(TT_EXP, '**', start_line, start_column))
+                    elif self.next_char() == '=':
+                        self.advance()
+                        self.advance()
+                        tokens.append(Token(TT_MULTIEQ, '*=', start_line, start_column))
                     else:
-                        tokens.append(Token(TT_MUL, '*'))  # Include lexeme
-                    self.advance()
-                # Handle division (/)
+                        tokens.append(Token(TT_MUL, '*', start_line, start_column))
+                        self.advance()
                 elif self.current_char == '/':
                     if self.next_char() == '=':
-                        current_line = self.line
-                        current_column = self.column
                         self.advance()
-                        tokens.append(Token(TT_DIVEQ, '/=', current_line, current_column))
+                        self.advance()
+                        tokens.append(Token(TT_DIVEQ, '/=', start_line, start_column))
                     else:
-                        tokens.append(Token(TT_DIV, '/', self.line, self.column))
-                    self.advance()
-                # Handle modulo (%)
+                        tokens.append(Token(TT_DIV, '/', start_line, start_column))
+                        self.advance()
                 elif self.current_char == '%':
                     if self.next_char() == '=':
-                        current_line = self.line
-                        current_column = self.column
                         self.advance()
-                        tokens.append(Token(TT_MODEQ, '%=', current_line, current_column))
+                        self.advance()
+                        tokens.append(Token(TT_MODEQ, '%=', start_line, start_column))
                     else:
-                        tokens.append(Token(TT_MOD, '%', self.line, self.column))
-                    self.advance()
+                        tokens.append(Token(TT_MOD, '%', start_line, start_column))
+                        self.advance()
                     
                 # Handle parentheses
                 elif self.current_char == '(':
                     open_parentheses += 1  # Increment open parentheses count
-                    tokens.append(Token(TT_LPAREN, '(', self.line, self.column))
+                    tokens.append(Token(TT_LPAREN, '(', start_line, start_column))
                     self.advance()
                 elif self.current_char == ')':
                     open_parentheses -= 1  # Decrement open parentheses count
-                    tokens.append(Token(TT_RPAREN, ')', self.line, self.column))
+                    tokens.append(Token(TT_RPAREN, ')', start_line, start_column))
                     self.advance()
                 # Handle curly braces
                 elif self.current_char == '{':
-                    tokens.append(Token(TT_BLOCK_START, '{', self.line, self.column))
+                    tokens.append(Token(TT_BLOCK_START, '{', start_line, start_column))
                     self.advance()
                 elif self.current_char == '}':
-                    tokens.append(Token(TT_BLOCK_END, '}', self.line, self.column))
+                    tokens.append(Token(TT_BLOCK_END, '}', start_line, start_column))
                     self.advance()
                 # Handle square brackets
                 elif self.current_char == '[':
-                    tokens.append(Token(TT_LSQBR, '[', self.line, self.column))
+                    tokens.append(Token(TT_LSQBR, '[', start_line, start_column))
                     self.advance()
                 elif self.current_char == ']':
-                    tokens.append(Token(TT_RSQBR, ']', self.line, self.column))
+                    tokens.append(Token(TT_RSQBR, ']', start_line, start_column))
                     self.advance()
                 elif self.current_char == '!':
                     if self.next_char() == '=':
-                        current_line = self.line
-                        current_column = self.column
                         self.advance()
-                        tokens.append(Token(TT_NOTEQ, '!=', self.line, self.column))
+                        self.advance()
+                        tokens.append(Token(TT_NOTEQ, '!=', start_line, start_column))
                     else:
-                        tokens.append(Token(TT_NOT, '!', self.line, self.column))
-                    self.advance()
+                        tokens.append(Token(TT_NOT, '!', start_line, start_column))
+                        self.advance()
                 elif self.current_char == ':':
-                    tokens.append(Token(TT_COLON, ':', self.line, self.column))
+                    tokens.append(Token(TT_COLON, ':', start_line, start_column))
                     self.advance()
-                elif self.current_char == '~' and self.next_char().isdigit():
+                elif self.current_char == '~' and self.next_char() and (self.next_char().isdigit() or self.next_char() == '~'):
                     token, error = self.make_number()
                     if error:
                         errors.append(error)
@@ -521,17 +620,17 @@ class Lexer:
                         tokens.append(token)
                 # Handle semicolons
                 elif self.current_char == ';':
-                    tokens.append(Token(TT_SEMICOLON, ';', self.line, self.column))
+                    tokens.append(Token(TT_SEMICOLON, ';', start_line, start_column))
                     self.advance()
                 # Handle commas
                 elif self.current_char == ',':
-                    tokens.append(Token(TT_COMMA, ',', self.line, self.column))
+                    tokens.append(Token(TT_COMMA, ',', start_line, start_column))
                     self.advance()
                 elif self.current_char == '.':
-                    tokens.append(Token(TT_STRCTACCESS, '.', self.line, self.column))
+                    tokens.append(Token(TT_STRCTACCESS, '.', start_line, start_column))
                     self.advance()
                 elif self.current_char == '`':
-                    tokens.append(Token(TT_CONCAT, '`', self.line, self.column))
+                    tokens.append(Token(TT_CONCAT, '`', start_line, start_column))
                     self.advance()
                 # Handle double quotes for strings
                 elif self.current_char == '"':
@@ -551,156 +650,42 @@ class Lexer:
                     if self.next_char() == '=':
                         self.advance()
                         self.advance()
-                        current_line = self.line
-                        current_column = self.column
-
-                        tokens.append(Token(TT_EQTO, '==', current_line, current_column))
+                        tokens.append(Token(TT_EQTO, '==', start_line, start_column))
                     else:
-                        tokens.append(Token(TT_EQ, '=', self.line, self.column))
+                        tokens.append(Token(TT_EQ, '=', start_line, start_column))
                         self.advance()
                 else:
-                    # Catch invalid characters or unexpected sequences
-                    errors.append(LexerError(f"Illegal character", self.line, self.column))
+                    # Catch invalid characters
+                    errors.append(LexerError(f"Illegal character: '{self.current_char}'", start_line, start_column))
                     self.advance()
                 
-                if self.current_char is None:
-                    continue
-
-                if tokens:
-                    category = self.KEYWORDS_CATEGORY.get(tokens[-1].type)
-                    if category is not None:
-                        if category == TC_DATATYPE:
-                                if self.current_char not in DELIMITERS['del1']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_MAIN:
-                                if self.current_char not in DELIMITERS['del7']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_USERFUNC:
-                                if self.current_char not in DELIMITERS['del1']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_CONDITIONAL:
-                                if self.current_char not in DELIMITERS['del5']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_JUMP:
-                                if self.current_char not in DELIMITERS['del2']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_CVAR:
-                                if self.current_char not in DELIMITERS['del1']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_LOOP:
-                                if self.current_char not in DELIMITERS['del5']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_LOGIC:
-                                if self.current_char not in DELIMITERS['del6']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_CONDITION:
-                                if self.current_char not in DELIMITERS['del1']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_DOLS:
-                                if self.current_char not in DELIMITERS['del3']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_DEFAULT:
-                                if self.current_char not in DELIMITERS['del4']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_FUNC:
-                                if self.current_char not in DELIMITERS['del7']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_RETURN:
-                                if self.current_char not in DELIMITERS['del8']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_OPENPAREN:
-                                if self.current_char not in DELIMITERS['del16']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_CLOSEPAREN:
-                                if self.current_char not in DELIMITERS['del18']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_ARITH:
-                                if self.current_char not in DELIMITERS['del24']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_LSQUARE:
-                                if self.current_char not in DELIMITERS['del12']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_RSQUARE:
-                                if self.current_char not in DELIMITERS['del13']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_LCURL:
-                                if self.current_char not in DELIMITERS['del14']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_RCURL:
-                                if self.current_char not in DELIMITERS['del15']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_INCDEC:
-                                if self.current_char not in DELIMITERS['del9']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_ASSIGN:
-                                if self.current_char not in DELIMITERS['del24']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_COMMA:
-                                if self.current_char not in DELIMITERS['del20']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_NUM:
-                                if self.current_char not in DELIMITERS['del23']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_DBL:
-                                if self.current_char not in DELIMITERS['del23']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        # elif category == TC_IDENTIFIERS:
-                        #         if self.current_char not in DELIMITERS['del22']:
-                        #             errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at {self.line} col {self.column}", self.line, self.column)]
-                        elif category == TC_RELATIONAL:
-                                if self.current_char not in DELIMITERS['del25']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_COLONSEMI:
-                                if self.current_char not in DELIMITERS['del11']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_NEGATIVE:
-                                if self.current_char not in DELIMITERS['del21']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_LOGICOP:
-                                if self.current_char not in DELIMITERS['del25']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_STRLIT:
-                                if self.current_char not in DELIMITERS['del19']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_CHRLIT:
-                                if self.current_char not in DELIMITERS['del26']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))  
-                        elif category == TC_NOT:
-                                if self.current_char not in DELIMITERS['del9']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))
-                        elif category == TC_STRCONCAT:
-                                if self.current_char not in DELIMITERS['del27']:
-                                    errors.append(LexerError(f"Unexpected delimiter '{self.current_char}' at line {self.line} col {self.column}", self.line, self.column))  
+                # Skip the delimiter checking since we're now handling whitespace properly
+                # and only raising errors for truly illegal characters
 
             # Add EOF token with line and column information
             tokens.append(Token(TT_EOF, 'EOF', self.line, self.column))
             
+            # Filter out tokens at error positions if needed
             remove_tokens = []
-
             t_index = 0
             for token in tokens:
                 for error in errors:
-                    print(token)
-                    print(error)
-                    if token.line == error.line:
-                        if token.column == error.column:
-                            remove_tokens.append(token)
-                    t_index += 1
+                    if token.line == error.line and token.column == error.column:
+                        remove_tokens.append(token)
+                t_index += 1
             
             for token in remove_tokens:
-                print(tokens.remove(token))
+                if token in tokens:
+                    tokens.remove(token)
 
-            print(remove_tokens)
             return tokens, errors
         except Exception as e:
             # Re-raise any unhandled exceptions as LexerError if they aren't already
             if not isinstance(e, LexerError):
                 errors.append(LexerError(str(e), self.line, self.column))
-            
             else:
                 errors.append(e)
             return tokens, errors
-
 
     def process_keyword_or_identifier(self):
         key = ""
@@ -711,12 +696,12 @@ class Lexer:
             self.advance()
 
         # Check if the first character is valid
-        if not (key[0].isalpha()):
-            return None, LexerError(f"Identifier '{key}' must start with a letter", self.line, self.column)
+        if not (key[0].isalpha() or key[0] == '_'):
+            return None, LexerError(f"Identifier '{key}' must start with a letter or underscore", line, column)
         
         # Check if the identifier length is valid (1 to 16 characters)
         if len(key) > 16:
-            return None, LexerError(f"Identifier '{key}' exceeds maximum length of 16 characters", self.line, self.column)
+            return None, LexerError(f"Identifier '{key}' exceeds maximum length of 16 characters", line, column)
 
         # Return token for keywords or identifiers
         if key in self.KEYWORDS:

@@ -1529,7 +1529,12 @@ class SemanticAnalyzer:
         data_type, type_value, type_line, type_column = self.get_current_token()
         self.advance()  # Move past the data type
         
-        # Get array name
+        # Process all array declarations and variables in this declaration
+        self.process_array_or_variable(data_type, is_constant)
+
+    def process_array_or_variable(self, data_type, is_constant=False):
+        """Process an array or variable declaration, possibly followed by more declarations"""
+        # Get variable name
         var_token_type, var_name, name_line, name_column = self.get_current_token()
         
         if var_token_type != 'id':
@@ -1539,14 +1544,15 @@ class SemanticAnalyzer:
         if self.current_scope.lookup(var_name) and self.current_scope.symbols.get(var_name):
             raise SemanticError(f"Variable '{var_name}' already declared", name_line, name_column)
         
-        self.advance()  # Move past array name
+        self.advance()  # Move past variable name
         
-        # Process array dimensions and sizes
-        array_dimensions = 0
-        array_sizes = []
-        
-        # First dimension
+        # Check if this is an array declaration (followed by '[')
         if self.get_current_token()[0] == '[':
+            # Process array dimensions and sizes
+            array_dimensions = 0
+            array_sizes = []
+            
+            # First dimension
             array_dimensions += 1
             self.advance()  # Move past '['
             
@@ -1565,7 +1571,6 @@ class SemanticAnalyzer:
                     raise SemanticError(f"Array size must be of type 'nt', got '{size_symbol.data_type}'", size1_line, size1_column)
                 if not size_symbol.initialized:
                     raise SemanticError(f"Uninitialized variable '{size1_value}' used as array size", size1_line, size1_column)
-                # Ideally we'd check the value is positive, but that requires constant folding
                 array_sizes.append(size1_value)  # Store the variable name
             else:
                 # It's a literal, make sure it's positive
@@ -1617,52 +1622,107 @@ class SemanticAnalyzer:
                                     self.get_current_token()[2], self.get_current_token()[3])
                 
                 self.advance()  # Move past ']'
-        
-        # Create array symbol
-        symbol = Symbol(
-            name=var_name,
-            type='variable',
-            data_type=data_type,
-            initialized=False,
-            is_constant=is_constant,
-            is_array=True,
-            array_dimensions=array_dimensions,
-            array_sizes=array_sizes,
-            line=name_line,
-            column=name_column
-        )
-        
-        # Check for initialization
-        if self.get_current_token()[0] == '=':
-            self.advance()  # Move past '='
             
-            # Handle array initialization
-            # For 1D: {elem1, elem2, ...}
-            # For 2D: {{elem1, elem2, ...}, {elem3, elem4, ...}, ...}
+            # Create array symbol
+            symbol = Symbol(
+                name=var_name,
+                type='variable',
+                data_type=data_type,
+                initialized=False,
+                is_constant=is_constant,
+                is_array=True,
+                array_dimensions=array_dimensions,
+                array_sizes=array_sizes,
+                line=name_line,
+                column=name_column
+            )
             
-            if self.get_current_token()[0] != '{':
-                raise SemanticError(f"Expected '{{' for array initialization, got {self.get_current_token()[0]}", 
-                                self.get_current_token()[2], self.get_current_token()[3])
+            # Check for initialization
+            if self.get_current_token()[0] == '=':
+                self.advance()  # Move past '='
+                
+                # Handle array initialization
+                if self.get_current_token()[0] != '{':
+                    raise SemanticError(f"Expected '{{' for array initialization, got {self.get_current_token()[0]}", 
+                                    self.get_current_token()[2], self.get_current_token()[3])
+                
+                # Process array initialization
+                if array_dimensions == 1:
+                    self.validate_1d_array_init(symbol, data_type, array_sizes[0])
+                elif array_dimensions == 2:
+                    self.validate_2d_array_init(symbol, data_type, array_sizes[0], array_sizes[1])
+                
+                symbol.initialized = True
+            elif is_constant:
+                # Constants must be initialized
+                raise SemanticError(f"Constant array '{var_name}' must be initialized", name_line, name_column)
             
-            # Process array initialization
-            if array_dimensions == 1:
-                self.validate_1d_array_init(symbol, data_type, array_sizes[0])
-            elif array_dimensions == 2:
-                self.validate_2d_array_init(symbol, data_type, array_sizes[0], array_sizes[1])
+            # Add the array symbol to the symbol table
+            self.current_scope.insert(var_name, symbol)
+            print(f"Added array '{var_name}' of type '{data_type}' with dimensions {array_dimensions} to scope '{self.current_scope.scope_name}'")
             
-            symbol.initialized = True
-        elif is_constant:
-            # Constants must be initialized
-            raise SemanticError(f"Constant array '{var_name}' must be initialized", name_line, name_column)
+        else:
+            # This is a regular variable, not an array
+            # Create symbol
+            symbol = Symbol(
+                name=var_name,
+                type='variable',
+                data_type=data_type,
+                initialized=False,
+                is_constant=is_constant,
+                line=name_line,
+                column=name_column
+            )
+            
+            # Check for initialization
+            if self.get_current_token()[0] == '=':
+                self.advance()  # Move past '='
+                
+                # Save starting position for expression analysis
+                start_pos = self.current_token_index
+                
+                # Skip ahead to find the end of the expression (semicolon or comma)
+                while (self.current_token_index < len(self.token_stream) and 
+                    self.token_stream[self.current_token_index][0] not in [';', ',']):
+                    self.advance()
+                
+                # Reset position to start of expression
+                end_pos = self.current_token_index
+                self.current_token_index = start_pos
+                
+                # Analyze the expression
+                expr_type = self.analyze_expression(end_pos)
+                
+                # Check if the expression type matches the variable type
+                if data_type != expr_type:
+                    # Special case for boolean variables being assigned relational expressions
+                    if data_type == 'bln' and expr_type == 'bln':
+                        # This is fine, expression results in boolean and variable is boolean
+                        pass
+                    else:
+                        raise SemanticError(
+                            f"Type mismatch: Cannot initialize '{data_type}' with {expr_type}",
+                            name_line, name_column
+                        )
+                
+                symbol.initialized = True
+                
+                # Move to end of expression
+                self.current_token_index = end_pos
+            
+            # Add the variable symbol to the symbol table
+            self.current_scope.insert(var_name, symbol)
+            print(f"Added variable '{var_name}' of type '{data_type}' to scope '{self.current_scope.scope_name}'")
         
-        # Add the symbol to the symbol table
-        self.current_scope.insert(var_name, symbol)
-        
-        # Skip to the end of the declaration (semicolon)
-        while self.current_token_index < len(self.token_stream) and self.get_current_token()[0] != ';':
-            self.advance()
-        
-        self.advance()  # Move past semicolon
+        # Check for comma or semicolon
+        if self.get_current_token()[0] == ',':
+            self.advance()  # Move past comma
+            self.process_array_or_variable(data_type, is_constant)  # Process next variable or array
+        elif self.get_current_token()[0] == ';':
+            self.advance()  # Move past semicolon
+        else:
+            raise SemanticError(f"Expected ',' or ';', got {self.get_current_token()[0]}", 
+                            self.get_current_token()[2], self.get_current_token()[3])
 
     def validate_1d_array_init(self, symbol, data_type, size):
         """Validate 1D array initialization"""
@@ -2311,10 +2371,20 @@ class SemanticAnalyzer:
                     # Logical NOT operator
                     self.advance()  # Skip !
                     
-                    # Handle subexpression after !
+                    # Track number of consecutive NOT operators
+                    not_count = 1
+                    while self.current_token_index < end_pos and self.token_stream[self.current_token_index][0] == '!':
+                        not_count += 1
+                        self.advance()  # Skip additional ! operators
+                    
+                    # Handle subexpression after the series of ! operators
                     if self.current_token_index < end_pos:
-                        next_token = self.token_stream[self.current_token_index][0]
-                        if next_token == '(':
+                        next_token_type = self.token_stream[self.current_token_index][0]
+                        next_token_value = self.token_stream[self.current_token_index][1]
+                        next_line = self.token_stream[self.current_token_index][2]
+                        next_column = self.token_stream[self.current_token_index][3]
+                        
+                        if next_token_type == '(':
                             # Process parenthesized expression after !
                             self.advance()  # Skip (
                             
@@ -2345,10 +2415,13 @@ class SemanticAnalyzer:
                             if subexpr_type != 'bln':
                                 print(f"ERROR: Cannot apply '!' to non-boolean type '{subexpr_type}'")
                                 raise SemanticError(f"Type mismatch: Cannot apply '!' to non-boolean type '{subexpr_type}'", line, column)
-                        else:
-                            # Not a parenthesized expression - just get the next token
-                            next_token_type, next_token_value, next_line, next_column = self.get_current_token()
                             
+                            # The result is always boolean, regardless of how many ! operators
+                            # If there's an odd number of ! operators, the value is negated
+                            # If there's an even number, it's equivalent to the original value
+                            current_type = 'bln'
+                        else:
+                            # Not a parenthesized expression - check the identifier or literal
                             if next_token_type == 'id':
                                 # Variable reference
                                 symbol = self.current_scope.lookup(next_token_value)
@@ -2360,18 +2433,24 @@ class SemanticAnalyzer:
                             elif next_token_type in ['true', 'false', 'blnlit']:
                                 subexpr_type = 'bln'
                             else:
-                                subexpr_type = None
+                                # For other token types, get their corresponding type
+                                subexpr_type = self.get_token_type(next_token_type)
                             
                             if subexpr_type != 'bln':
                                 print(f"ERROR: Cannot apply '!' to non-boolean type '{subexpr_type}'")
                                 raise SemanticError(f"Type mismatch: Cannot apply '!' to non-boolean type '{subexpr_type}'", next_line, next_column)
                             
-                            self.advance()
+                            self.advance()  # Skip the operand
+                            current_type = 'bln'
+                        
+                        expecting_operand = False
+                        
                     else:
+                        # No operand after ! operator
                         raise SemanticError("Unexpected end of expression after '!'", line, column)
                     
                     operand_type = 'bln'
-                    current_type = operand_type
+                    current_type = operand_type 
                     expecting_operand = False
                     continue
                 elif token_type == 'npt':
