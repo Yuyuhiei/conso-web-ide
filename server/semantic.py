@@ -1462,6 +1462,22 @@ class SemanticAnalyzer:
             )
             
             self.advance()  # Move past variable name
+
+             # Check for array declaration
+            if self.get_current_token()[0] == '[':
+                # Save current position
+                start_pos = self.current_token_index
+                self.current_token_index -= 2  # Go back to data type
+                
+                # Use array declaration analyzer
+                self.analyze_array_declaration()
+                
+                # Look for comma to continue with more declarations
+                if self.get_current_token()[0] == ',':
+                    self.advance()  # Move past comma
+                    continue
+                else:
+                    break  # End of declaration
             
             # Check for initialization
             token_type, token_value, line, column = self.get_current_token()
@@ -1502,6 +1518,9 @@ class SemanticAnalyzer:
             
             # Add the symbol to the symbol table
             self.current_scope.insert(var_name, symbol)
+
+            # Debug output to confirm variable was added
+            print(f"Added variable '{var_name}' of type '{data_type}' to scope '{self.current_scope.scope_name}'")
             
             # Check for comma or end of declaration
             token_type, token_value, line, column = self.get_current_token()
@@ -1529,7 +1548,12 @@ class SemanticAnalyzer:
         data_type, type_value, type_line, type_column = self.get_current_token()
         self.advance()  # Move past the data type
         
-        # Get array name
+        # Process all array declarations and variables in this declaration
+        self.process_array_or_variable(data_type, is_constant)
+
+    def process_array_or_variable(self, data_type, is_constant=False):
+        """Process an array or variable declaration, possibly followed by more declarations"""
+        # Get variable name
         var_token_type, var_name, name_line, name_column = self.get_current_token()
         
         if var_token_type != 'id':
@@ -1539,14 +1563,15 @@ class SemanticAnalyzer:
         if self.current_scope.lookup(var_name) and self.current_scope.symbols.get(var_name):
             raise SemanticError(f"Variable '{var_name}' already declared", name_line, name_column)
         
-        self.advance()  # Move past array name
+        self.advance()  # Move past variable name
         
-        # Process array dimensions and sizes
-        array_dimensions = 0
-        array_sizes = []
-        
-        # First dimension
+        # Check if this is an array declaration (followed by '[')
         if self.get_current_token()[0] == '[':
+            # Process array dimensions and sizes
+            array_dimensions = 0
+            array_sizes = []
+            
+            # First dimension
             array_dimensions += 1
             self.advance()  # Move past '['
             
@@ -1565,7 +1590,6 @@ class SemanticAnalyzer:
                     raise SemanticError(f"Array size must be of type 'nt', got '{size_symbol.data_type}'", size1_line, size1_column)
                 if not size_symbol.initialized:
                     raise SemanticError(f"Uninitialized variable '{size1_value}' used as array size", size1_line, size1_column)
-                # Ideally we'd check the value is positive, but that requires constant folding
                 array_sizes.append(size1_value)  # Store the variable name
             else:
                 # It's a literal, make sure it's positive
@@ -1617,52 +1641,186 @@ class SemanticAnalyzer:
                                     self.get_current_token()[2], self.get_current_token()[3])
                 
                 self.advance()  # Move past ']'
+            
+            # Create array symbol
+            symbol = Symbol(
+                name=var_name,
+                type='variable',
+                data_type=data_type,
+                initialized=False,
+                is_constant=is_constant,
+                is_array=True,
+                array_dimensions=array_dimensions,
+                array_sizes=array_sizes,
+                line=name_line,
+                column=name_column
+            )
+            
+            # Check for initialization
+            if self.get_current_token()[0] == '=':
+                self.advance()  # Move past '='
+                
+                # Handle array initialization
+                if self.get_current_token()[0] != '{':
+                    raise SemanticError(f"Expected '{{' for array initialization, got {self.get_current_token()[0]}", 
+                                    self.get_current_token()[2], self.get_current_token()[3])
+                
+                # Process array initialization
+                if array_dimensions == 1:
+                    self.validate_1d_array_init(symbol, data_type, array_sizes[0])
+                elif array_dimensions == 2:
+                    self.validate_2d_array_init(symbol, data_type, array_sizes[0], array_sizes[1])
+                
+                symbol.initialized = True
+            elif is_constant:
+                # Constants must be initialized
+                raise SemanticError(f"Constant array '{var_name}' must be initialized", name_line, name_column)
+            
+            # Add the array symbol to the symbol table
+            self.current_scope.insert(var_name, symbol)
+            print(f"Added array '{var_name}' of type '{data_type}' with dimensions {array_dimensions} to scope '{self.current_scope.scope_name}'")
+            
+        else:
+            # This is a regular variable, not an array
+            # Create symbol
+            symbol = Symbol(
+                name=var_name,
+                type='variable',
+                data_type=data_type,
+                initialized=False,
+                is_constant=is_constant,
+                line=name_line,
+                column=name_column
+            )
+            
+            # Check for initialization
+            if self.get_current_token()[0] == '=':
+                self.advance()  # Move past '='
+                
+                # Save starting position for expression analysis
+                start_pos = self.current_token_index
+                
+                # Skip ahead to find the end of the expression (semicolon or comma)
+                while (self.current_token_index < len(self.token_stream) and 
+                    self.token_stream[self.current_token_index][0] not in [';', ',']):
+                    self.advance()
+                
+                # Reset position to start of expression
+                end_pos = self.current_token_index
+                self.current_token_index = start_pos
+                
+                # Analyze the expression
+                expr_type = self.analyze_expression(end_pos)
+                
+                # Check if the expression type matches the variable type
+                if data_type != expr_type:
+                    # Special case for boolean variables being assigned relational expressions
+                    if data_type == 'bln' and expr_type == 'bln':
+                        # This is fine, expression results in boolean and variable is boolean
+                        pass
+                    else:
+                        raise SemanticError(
+                            f"Type mismatch: Cannot initialize '{data_type}' with {expr_type}",
+                            name_line, name_column
+                        )
+                
+                symbol.initialized = True
+                
+                # Move to end of expression
+                self.current_token_index = end_pos
+            
+            # Add the variable symbol to the symbol table
+            self.current_scope.insert(var_name, symbol)
+            print(f"Added variable '{var_name}' of type '{data_type}' to scope '{self.current_scope.scope_name}'")
         
-        # Create array symbol
+        # Check for comma or semicolon
+        if self.get_current_token()[0] == ',':
+            self.advance()  # Move past comma
+            self.process_array_or_variable(data_type, is_constant)  # Process next variable or array
+        elif self.get_current_token()[0] == ';':
+            self.advance()  # Move past semicolon
+        else:
+            raise SemanticError(f"Expected ',' or ';', got {self.get_current_token()[0]}", 
+                            self.get_current_token()[2], self.get_current_token()[3])
+
+    # Helper method to process additional variables in a declaration list
+    def process_additional_variables(self, data_type):
+        """Process additional variables in a declaration list after a comma"""
+        self.advance()  # Move past comma
+        
+        # Get variable name
+        var_token_type, var_name, name_line, name_column = self.get_current_token()
+        
+        if var_token_type != 'id':
+            raise SemanticError(f"Expected an identifier, got {var_token_type}", name_line, name_column)
+        
+        # Check for duplicate declaration
+        if self.current_scope.lookup(var_name) and self.current_scope.symbols.get(var_name):
+            raise SemanticError(f"Variable '{var_name}' already declared", name_line, name_column)
+        
+        # Create symbol
         symbol = Symbol(
             name=var_name,
             type='variable',
             data_type=data_type,
             initialized=False,
-            is_constant=is_constant,
-            is_array=True,
-            array_dimensions=array_dimensions,
-            array_sizes=array_sizes,
             line=name_line,
             column=name_column
         )
+        
+        self.advance()  # Move past variable name
+        
+        # Check for array declaration
+        if self.get_current_token()[0] == '[':
+            # This is another array - handle it with the array declaration
+            self.current_token_index -= 2  # Go back to the identifier
+            # We need to insert the data type token before the current token
+            # This is complex to do, so instead just signal the main array declaration method
+            return
         
         # Check for initialization
         if self.get_current_token()[0] == '=':
             self.advance()  # Move past '='
             
-            # Handle array initialization
-            # For 1D: {elem1, elem2, ...}
-            # For 2D: {{elem1, elem2, ...}, {elem3, elem4, ...}, ...}
+            # Save starting position for expression analysis
+            start_pos = self.current_token_index
             
-            if self.get_current_token()[0] != '{':
-                raise SemanticError(f"Expected '{{' for array initialization, got {self.get_current_token()[0]}", 
-                                self.get_current_token()[2], self.get_current_token()[3])
+            # Skip ahead to find the end of the expression (semicolon or comma)
+            while (self.current_token_index < len(self.token_stream) and 
+                self.token_stream[self.current_token_index][0] not in [';', ',']):
+                self.advance()
             
-            # Process array initialization
-            if array_dimensions == 1:
-                self.validate_1d_array_init(symbol, data_type, array_sizes[0])
-            elif array_dimensions == 2:
-                self.validate_2d_array_init(symbol, data_type, array_sizes[0], array_sizes[1])
+            # Reset position to start of expression
+            end_pos = self.current_token_index
+            self.current_token_index = start_pos
+            
+            # Analyze the expression
+            expr_type = self.analyze_expression(end_pos)
+            
+            # Check if the expression type matches the variable type
+            if data_type != expr_type:
+                raise SemanticError(
+                    f"Type mismatch: Cannot initialize '{data_type}' with {expr_type}",
+                    name_line, name_column
+                )
             
             symbol.initialized = True
-        elif is_constant:
-            # Constants must be initialized
-            raise SemanticError(f"Constant array '{var_name}' must be initialized", name_line, name_column)
+            
+            # Move to end of expression
+            self.current_token_index = end_pos
         
         # Add the symbol to the symbol table
         self.current_scope.insert(var_name, symbol)
+        print(f"Added variable '{var_name}' of type '{data_type}' to scope '{self.current_scope.scope_name}'")
         
-        # Skip to the end of the declaration (semicolon)
-        while self.current_token_index < len(self.token_stream) and self.get_current_token()[0] != ';':
-            self.advance()
-        
-        self.advance()  # Move past semicolon
+        # Check for more variables
+        if self.get_current_token()[0] == ',':
+            self.process_additional_variables(data_type)
+        elif self.get_current_token()[0] == ';':
+            self.advance()  # Move past semicolon
+        else:
+            raise SemanticError(f"Expected ',' or ';', got {self.get_current_token()[0]}", 
+                            self.get_current_token()[2], self.get_current_token()[3])
 
     def validate_1d_array_init(self, symbol, data_type, size):
         """Validate 1D array initialization"""
