@@ -1,0 +1,121 @@
+# This is a simple Conso program
+
+fnctn nt addNumbers(nt a, nt b) {
+    rtrn a + b;
+}
+
+fnctn nt subNumbers(nt a, nt b) {
+    rtrn a - b;
+}
+
+fnctn nt mulNumbers(nt a, nt b) {
+    rtrn a * b;
+}
+
+fnctn nt divNumbers(nt a, nt b) {
+    f (b == 0) {
+        rtrn 0;
+    }
+    rtrn a / b;
+}
+
+fnctn nt calc(nt op, nt a, nt b) {
+    f (op == 1) {
+        rtrn mulNumbers(a, b);
+    }
+    lsf (op == 2) {
+        rtrn divNumbers(a, b);
+    }
+    lsf (op == 3) {
+        rtrn addNumbers(a, b);
+    }
+    lsf (op == 4) {
+        rtrn subNumbers(a, b);
+    }
+    ls {
+        rtrn 0;
+    }
+}
+
+fnctn vd drawRTri(nt rows) {
+    nt i = 1;
+    nt j = 1;  
+    whl (i <= rows) {
+        whl (j <= i) {
+            prnt("* ");
+            j++;
+        }
+        prnt("\n");
+        i++;
+    }
+}
+
+fnctn vd drawSquare(nt size) {
+    nt i = 1;
+    nt j = 1;
+    whl (i <= size) {
+        whl (j <= size) {
+            prnt("* ");
+            j++;
+        }
+        prnt("\n");
+        i++;
+    }
+}
+
+fnctn vd isEven(nt num) {
+    f (num % 2 == 0) {
+        prnt(num, " is even");
+    }
+    ls {
+        prnt(num, " is odd");
+    }
+}
+
+fnctn vd isLeap(nt year) {
+    f ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) {
+        prnt(year, " is a leap year");
+    }
+    ls {
+        prnt(year, " is not a leap year");
+    }
+}
+
+mn() {
+    # MDAS operations
+    nt a = 10;
+    nt b = 5;
+    
+    prnt("MDAS Operations:");
+    prnt("a = ", a, ", b = ", b);
+    prnt("Multiplication: ", a, " * ", b, " = ", a * b);
+    prnt("Division: ", a, " / ", b, " = ", a / b);
+    prnt("Addition: ", a, " + ", b, " = ", a + b);
+    prnt("Subtraction: ", a, " - ", b, " = ", a - b);
+    
+    # Function call for MDAS
+    prnt("\nUsing calculator function:");
+    prnt("Option 1 (Multiply): ", calc(1, a, b));
+    prnt("Option 2 (Divide): ", calc(2, a, b));
+    prnt("Option 3 (Add): ", calc(3, a, b));
+    prnt("Option 4 (Subtract): ", calc(4, a, b));
+    
+    # Shape drawing
+    prnt("\nDrawing a right triangle:");
+    drawRTri(5);
+    
+    prnt("\nDrawing a square:");
+    drawSquare(4);
+    
+    # Even/odd check
+    prnt("\nChecking if numbers are even or odd:");
+    isEven(10);
+    isEven(7);
+    
+    # Leap year check
+    prnt("\nChecking if years are leap years:");
+    isLeap(2020);
+    isLeap(2023);
+    
+    end;
+}

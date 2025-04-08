@@ -12,11 +12,14 @@ class ParserError(Exception):
             return f"{self.message} (Line {self.line}, Column {self.column})"
         return self.message
 
-def parse():
+def parse(token_list=None):
     add_all_set()
-
-    if not token:
-        raise ParserError("❌ Syntax Error: No tokens provided.")
+    
+    # Use provided token list or fall back to global
+    tokens_to_parse = token_list if token_list is not None else token
+    
+    if not tokens_to_parse:
+        raise ParserError("Syntax Error: No tokens provided.")
 
     stack = ["<program>"]
     current_token_index = 0
@@ -26,12 +29,30 @@ def parse():
 
     def get_lookahead():
         """Safely retrieve the current token and its position."""
-        if current_token_index < len(token):
-            curr_token, line, column = token[current_token_index]  # ✅ Extract type, line, and column
-            if curr_token.startswith("id"):
+        if current_token_index < len(tokens_to_parse):  # FIXED: Use tokens_to_parse instead of token
+            token_data = tokens_to_parse[current_token_index]
+            
+            # Handle Token objects
+            if hasattr(token_data, 'type') and hasattr(token_data, 'line') and hasattr(token_data, 'column'):
+                curr_token = token_data.type
+                line = token_data.line
+                column = token_data.column
+            # Handle token tuples with various formats
+            elif isinstance(token_data, tuple):
+                if len(token_data) == 3:
+                    curr_token, line, column = token_data
+                elif len(token_data) == 4:
+                    curr_token, token_value, line, column = token_data
+                else:
+                    return "$", None, None
+            else:
+                # Fallback for other formats
+                return "$", None, None
+            
+            if isinstance(curr_token, str) and curr_token.startswith("id"):
                 return "id", line, column
             return curr_token, line, column
-        return "$", None, None  # ✅ Return EOF marker with no position
+        return "$", None, None
 
     try: 
         while stack:
@@ -39,34 +60,35 @@ def parse():
             lookahead, line, column = get_lookahead()
 
             # Debugging logs
-            print(f"🔄 Current Index: {current_token_index}, Remaining Tokens: {token[current_token_index:]}")
-            log_messages.append(f"🔍 Stack Top: {top}, Lookahead: {lookahead} (Line {line-1 if line is not None else line}, Column {column})")
+            print(f"Current Index: {current_token_index}")
+            log_messages.append(f"Stack Top: {top}, Lookahead: {lookahead} (Line {line-1 if line is not None else line}, Column {column})")
 
             if lookahead == "$" and top != "$":
-                raise ParserError("❌ Syntax Error: Unexpected end of input.", line, column)
+                raise ParserError("Syntax Error: Unexpected end of input.", line, column)
 
             if top == lookahead:
-                log_messages.append(f"✅ Matched: {lookahead} (Line {line-1 if line is not None else line}, Column {column})")  # Debug
+                log_messages.append(f"Matched: {lookahead} (Line {line-1 if line is not None else line}, Column {column})")  # Debug
                 current_token_index += 1
             elif top in parsing_table:
                 rule = parsing_table[top].get(lookahead)
                 if rule:
-                    if rule == ["null"]:  # ✅ Handle `null` (epsilon) productions
-                        log_messages.append(f"🔍 Skipping {top} (Epsilon Production)")
+                    if rule == ["null"]:  # Handle `null` (epsilon) productions
+                        log_messages.append(f"Skipping {top} (Epsilon Production)")
                     else:
-                        log_messages.append(f"📌 Applying Rule: {top} -> {' '.join(rule)}")  # Debug
+                        log_messages.append(f"Applying Rule: {top} -> {' '.join(rule)}")  # Debug
                         stack.extend(reversed(rule))
                 else:
                     expected_tokens = list(parsing_table[top].keys())
-                    raise ParserError(f"❌ Syntax Error: Unexpected token '{lookahead}', expected one of: {expected_tokens}", line, column)
+                    raise ParserError(f"Syntax Error: Unexpected token '{lookahead}', expected one of: {expected_tokens}", line, column)
             else:
-                raise ParserError(f"❌ Syntax Error: Unexpected symbol '{lookahead}', expected '{top}'", line, column)
+                raise ParserError(f"Syntax Error: Unexpected symbol '{lookahead}', expected '{top}'", line, column)
 
-        if not stack and current_token_index == len(token) - 1 and token[current_token_index][0] == "EOF":
-            error_message.append("✅ Input accepted: Syntactically correct.")
+        # Check if we parsed all tokens
+        if not stack and current_token_index < len(tokens_to_parse) and tokens_to_parse[current_token_index][0] == "EOF":
+            error_message.append("Input accepted: Syntactically correct.")
             syntax_valid = True  # Set flag to True when syntax is correct
         else:
-            raise ParserError("❌ Input rejected: Syntax Error - Unexpected tokens remaining.")
+            raise ParserError("Input rejected: Syntax Error - Unexpected tokens remaining.")
 
     except ParserError as e:
         error_message.append(str(e))
