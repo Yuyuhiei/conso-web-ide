@@ -1462,22 +1462,6 @@ class SemanticAnalyzer:
             )
             
             self.advance()  # Move past variable name
-
-             # Check for array declaration
-            if self.get_current_token()[0] == '[':
-                # Save current position
-                start_pos = self.current_token_index
-                self.current_token_index -= 2  # Go back to data type
-                
-                # Use array declaration analyzer
-                self.analyze_array_declaration()
-                
-                # Look for comma to continue with more declarations
-                if self.get_current_token()[0] == ',':
-                    self.advance()  # Move past comma
-                    continue
-                else:
-                    break  # End of declaration
             
             # Check for initialization
             token_type, token_value, line, column = self.get_current_token()
@@ -1518,9 +1502,6 @@ class SemanticAnalyzer:
             
             # Add the symbol to the symbol table
             self.current_scope.insert(var_name, symbol)
-
-            # Debug output to confirm variable was added
-            print(f"Added variable '{var_name}' of type '{data_type}' to scope '{self.current_scope.scope_name}'")
             
             # Check for comma or end of declaration
             token_type, token_value, line, column = self.get_current_token()
@@ -1737,85 +1718,6 @@ class SemanticAnalyzer:
         if self.get_current_token()[0] == ',':
             self.advance()  # Move past comma
             self.process_array_or_variable(data_type, is_constant)  # Process next variable or array
-        elif self.get_current_token()[0] == ';':
-            self.advance()  # Move past semicolon
-        else:
-            raise SemanticError(f"Expected ',' or ';', got {self.get_current_token()[0]}", 
-                            self.get_current_token()[2], self.get_current_token()[3])
-
-    # Helper method to process additional variables in a declaration list
-    def process_additional_variables(self, data_type):
-        """Process additional variables in a declaration list after a comma"""
-        self.advance()  # Move past comma
-        
-        # Get variable name
-        var_token_type, var_name, name_line, name_column = self.get_current_token()
-        
-        if var_token_type != 'id':
-            raise SemanticError(f"Expected an identifier, got {var_token_type}", name_line, name_column)
-        
-        # Check for duplicate declaration
-        if self.current_scope.lookup(var_name) and self.current_scope.symbols.get(var_name):
-            raise SemanticError(f"Variable '{var_name}' already declared", name_line, name_column)
-        
-        # Create symbol
-        symbol = Symbol(
-            name=var_name,
-            type='variable',
-            data_type=data_type,
-            initialized=False,
-            line=name_line,
-            column=name_column
-        )
-        
-        self.advance()  # Move past variable name
-        
-        # Check for array declaration
-        if self.get_current_token()[0] == '[':
-            # This is another array - handle it with the array declaration
-            self.current_token_index -= 2  # Go back to the identifier
-            # We need to insert the data type token before the current token
-            # This is complex to do, so instead just signal the main array declaration method
-            return
-        
-        # Check for initialization
-        if self.get_current_token()[0] == '=':
-            self.advance()  # Move past '='
-            
-            # Save starting position for expression analysis
-            start_pos = self.current_token_index
-            
-            # Skip ahead to find the end of the expression (semicolon or comma)
-            while (self.current_token_index < len(self.token_stream) and 
-                self.token_stream[self.current_token_index][0] not in [';', ',']):
-                self.advance()
-            
-            # Reset position to start of expression
-            end_pos = self.current_token_index
-            self.current_token_index = start_pos
-            
-            # Analyze the expression
-            expr_type = self.analyze_expression(end_pos)
-            
-            # Check if the expression type matches the variable type
-            if data_type != expr_type:
-                raise SemanticError(
-                    f"Type mismatch: Cannot initialize '{data_type}' with {expr_type}",
-                    name_line, name_column
-                )
-            
-            symbol.initialized = True
-            
-            # Move to end of expression
-            self.current_token_index = end_pos
-        
-        # Add the symbol to the symbol table
-        self.current_scope.insert(var_name, symbol)
-        print(f"Added variable '{var_name}' of type '{data_type}' to scope '{self.current_scope.scope_name}'")
-        
-        # Check for more variables
-        if self.get_current_token()[0] == ',':
-            self.process_additional_variables(data_type)
         elif self.get_current_token()[0] == ';':
             self.advance()  # Move past semicolon
         else:
@@ -2469,10 +2371,20 @@ class SemanticAnalyzer:
                     # Logical NOT operator
                     self.advance()  # Skip !
                     
-                    # Handle subexpression after !
+                    # Track number of consecutive NOT operators
+                    not_count = 1
+                    while self.current_token_index < end_pos and self.token_stream[self.current_token_index][0] == '!':
+                        not_count += 1
+                        self.advance()  # Skip additional ! operators
+                    
+                    # Handle subexpression after the series of ! operators
                     if self.current_token_index < end_pos:
-                        next_token = self.token_stream[self.current_token_index][0]
-                        if next_token == '(':
+                        next_token_type = self.token_stream[self.current_token_index][0]
+                        next_token_value = self.token_stream[self.current_token_index][1]
+                        next_line = self.token_stream[self.current_token_index][2]
+                        next_column = self.token_stream[self.current_token_index][3]
+                        
+                        if next_token_type == '(':
                             # Process parenthesized expression after !
                             self.advance()  # Skip (
                             
@@ -2503,10 +2415,13 @@ class SemanticAnalyzer:
                             if subexpr_type != 'bln':
                                 print(f"ERROR: Cannot apply '!' to non-boolean type '{subexpr_type}'")
                                 raise SemanticError(f"Type mismatch: Cannot apply '!' to non-boolean type '{subexpr_type}'", line, column)
-                        else:
-                            # Not a parenthesized expression - just get the next token
-                            next_token_type, next_token_value, next_line, next_column = self.get_current_token()
                             
+                            # The result is always boolean, regardless of how many ! operators
+                            # If there's an odd number of ! operators, the value is negated
+                            # If there's an even number, it's equivalent to the original value
+                            current_type = 'bln'
+                        else:
+                            # Not a parenthesized expression - check the identifier or literal
                             if next_token_type == 'id':
                                 # Variable reference
                                 symbol = self.current_scope.lookup(next_token_value)
@@ -2518,18 +2433,24 @@ class SemanticAnalyzer:
                             elif next_token_type in ['true', 'false', 'blnlit']:
                                 subexpr_type = 'bln'
                             else:
-                                subexpr_type = None
+                                # For other token types, get their corresponding type
+                                subexpr_type = self.get_token_type(next_token_type)
                             
                             if subexpr_type != 'bln':
                                 print(f"ERROR: Cannot apply '!' to non-boolean type '{subexpr_type}'")
                                 raise SemanticError(f"Type mismatch: Cannot apply '!' to non-boolean type '{subexpr_type}'", next_line, next_column)
                             
-                            self.advance()
+                            self.advance()  # Skip the operand
+                            current_type = 'bln'
+                        
+                        expecting_operand = False
+                        
                     else:
+                        # No operand after ! operator
                         raise SemanticError("Unexpected end of expression after '!'", line, column)
                     
                     operand_type = 'bln'
-                    current_type = operand_type
+                    current_type = operand_type 
                     expecting_operand = False
                     continue
                 elif token_type == 'npt':
@@ -2619,20 +2540,6 @@ class SemanticAnalyzer:
             # Handle operators
             else:
                 if token_type in self.arithmetic_operators:
-                    # Division by zero check
-                    if token_type == '/':
-                        # Check if the next token is a literal zero
-                        next_token_index = self.current_token_index + 1
-                        if next_token_index < len(self.token_stream):
-                            next_token = self.token_stream[next_token_index]
-                            next_type, next_value, next_line, next_column = next_token
-                            
-                            # Check for literal zero
-                            if next_type == 'ntlit' and next_value == '0':
-                                raise SemanticError("Division by zero", next_line, next_column)
-                            elif next_type == 'dbllit' and float(next_value) == 0.0:
-                                raise SemanticError("Division by zero", next_line, next_column)
-                        
                     # Verify current type supports arithmetic
                     if current_type not in ['nt', 'dbl']:
                         print(f"ERROR: Cannot apply arithmetic operator '{token_type}' to '{current_type}'")
