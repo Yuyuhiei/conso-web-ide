@@ -775,6 +775,11 @@ class CodeGenerator:
         
         while self.current_token_index < len(self.token_stream) and iteration_count < max_iterations:
             token_type, token_value, line, column = self.get_current_token()
+
+             # Skip EOF tokens
+            if token_type == 'EOF':
+                self.advance()  # Skip EOF tokens
+                continue
             
             # Check if we're stuck
             if self.current_token_index == last_position:
@@ -841,6 +846,14 @@ class CodeGenerator:
             elif token_type == 'id':
                 # Could be function call, assignment, etc.
                 self.generate_identifier_code(function_name)
+            elif token_type == 'end':
+                # In Conso, 'end' appears before the closing brace of main
+                # Just skip it and its semicolon
+                self.advance()  # Skip 'end'
+                
+                # Skip semicolon if present
+                if self.current_token_index < len(self.token_stream) and self.get_current_token()[0] == ';':
+                    self.advance()
             else:
                 # Skip unknown tokens
                 self.advance()
