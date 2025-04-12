@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 
-const Terminal = ({ output, codeChanged, transpiledCode }) => {
+const Terminal = ({ output, codeChanged, transpiledCode, programOutput }) => {
   const terminalRef = useRef(null);
   const resizeHandleRef = useRef(null);
   const [height, setHeight] = useState(200); // Default height
@@ -13,7 +13,7 @@ const Terminal = ({ output, codeChanged, transpiledCode }) => {
     lexical: null,
     syntax: null,
     semantic: null,
-    transpilation: null // New category for transpilation messages
+    execution: null // For program execution results
   });
 
   // Auto scroll to bottom when new output is added
@@ -21,7 +21,7 @@ const Terminal = ({ output, codeChanged, transpiledCode }) => {
     if (terminalRef.current) {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
-  }, [categoryMessages, showTranspiledInTerminal]);
+  }, [categoryMessages, showTranspiledInTerminal, programOutput]);
   
   // Clear semantic analysis message when code changes
   useEffect(() => {
@@ -29,20 +29,20 @@ const Terminal = ({ output, codeChanged, transpiledCode }) => {
       setCategoryMessages(prev => ({
         ...prev,
         semantic: null,
-        transpilation: null // Also clear transpilation message
+        execution: null // Also clear execution results
       }));
     }
   }, [codeChanged]);
 
-  // Update transpilation state when transpiled code changes
+  // Update execution results when program output changes
   useEffect(() => {
-    if (transpiledCode) {
+    if (programOutput) {
       setCategoryMessages(prev => ({
         ...prev,
-        transpilation: "Transpilation successful! C code is ready."
+        execution: "Program executed successfully"
       }));
     }
-  }, [transpiledCode]);
+  }, [programOutput]);
 
   // Setup resize handlers
   useEffect(() => {
@@ -90,7 +90,7 @@ const Terminal = ({ output, codeChanged, transpiledCode }) => {
         lexical: null,
         syntax: null,
         semantic: null,
-        transpilation: null
+        execution: null
       });
       return;
     }
@@ -103,7 +103,7 @@ const Terminal = ({ output, codeChanged, transpiledCode }) => {
       lexical: null,
       syntax: null,
       semantic: codeChanged ? null : categoryMessages.semantic, // If code has changed, clear semantic message
-      transpilation: codeChanged ? null : categoryMessages.transpilation // If code has changed, clear transpilation message
+      execution: codeChanged ? null : categoryMessages.execution // If code has changed, clear execution results
     };
     
     lines.forEach(line => {
@@ -122,15 +122,15 @@ const Terminal = ({ output, codeChanged, transpiledCode }) => {
         // Only update semantic message if code hasn't changed
         newCategoryMessages.semantic = line;
       }
-      // Transpilation messages
-      else if (line.includes('Transpil') && !codeChanged) {
-        // Only update transpilation message if code hasn't changed
-        newCategoryMessages.transpilation = line;
+      // Execution messages
+      else if ((line.includes('executed') || line.includes('Running')) && !codeChanged) {
+        // Only update execution message if code hasn't changed
+        newCategoryMessages.execution = line;
       }
     });
     
     setCategoryMessages(newCategoryMessages);
-  }, [output, categoryMessages.semantic, categoryMessages.transpilation, codeChanged]);
+  }, [output, categoryMessages.semantic, categoryMessages.execution, codeChanged]);
 
   // Get line type based on content to apply appropriate styling
   const getLineType = (line) => {
@@ -181,11 +181,11 @@ const Terminal = ({ output, codeChanged, transpiledCode }) => {
       });
     }
 
-    if (categoryMessages.transpilation) {
+    if (categoryMessages.execution) {
       result.push({
-        category: 'Transpilation',
-        text: categoryMessages.transpilation,
-        type: getLineType(categoryMessages.transpilation)
+        category: 'Execution',
+        text: categoryMessages.execution,
+        type: getLineType(categoryMessages.execution)
       });
     }
     
@@ -233,22 +233,24 @@ const Terminal = ({ output, codeChanged, transpiledCode }) => {
         }}
       >
         <div>Terminal</div>
-        {transpiledCode && (
-          <button 
-            onClick={toggleTranspiledCode} 
-            style={{ 
-              backgroundColor: 'rgba(255,255,255,0.1)', 
-              border: 'none', 
-              color: 'white', 
-              padding: '2px 8px', 
-              borderRadius: '3px', 
-              cursor: 'pointer',
-              fontSize: '12px' 
-            }}
-          >
-            {showTranspiledInTerminal ? 'Hide C Code' : 'Show C Code'}
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {transpiledCode && (
+            <button 
+              onClick={toggleTranspiledCode} 
+              style={{ 
+                backgroundColor: 'rgba(255,255,255,0.1)', 
+                border: 'none', 
+                color: 'white', 
+                padding: '2px 8px', 
+                borderRadius: '3px', 
+                cursor: 'pointer',
+                fontSize: '12px' 
+              }}
+            >
+              {showTranspiledInTerminal ? 'Hide C Code' : 'Show C Code'}
+            </button>
+          )}
+        </div>
       </div>
       
       <div 
@@ -288,7 +290,7 @@ const Terminal = ({ output, codeChanged, transpiledCode }) => {
           `}
         </style>
         
-        {displayLines.length === 0 ? (
+        {displayLines.length === 0 && !programOutput ? (
           <div className="terminal-line info" style={{ marginLeft: '15px' }}>
             Ready
           </div>
@@ -305,7 +307,7 @@ const Terminal = ({ output, codeChanged, transpiledCode }) => {
                   marginBottom: '10px',
                   padding: '5px 0',
                   marginLeft: '15px',
-                  borderBottom: index < displayLines.length - 1 ? '1px solid #333' : 'none'
+                  borderBottom: (index < displayLines.length - 1 || programOutput) ? '1px solid #333' : 'none'
                 }}
               >
                 <span style={{ fontWeight: 'bold', marginRight: '8px' }}>
@@ -315,12 +317,45 @@ const Terminal = ({ output, codeChanged, transpiledCode }) => {
               </div>
             ))}
             
+            {/* Program output section */}
+            {programOutput && (
+              <div 
+                className="program-output"
+                style={{
+                  marginTop: '15px',
+                  marginLeft: '15px',
+                  borderTop: displayLines.length > 0 ? '1px solid #555' : 'none',
+                  paddingTop: displayLines.length > 0 ? '10px' : '0'
+                }}
+              >
+                <div style={{ fontWeight: 'bold', marginBottom: '10px', color: '#89d185' }}>
+                  Program Output:
+                </div>
+                <pre
+                  style={{
+                    backgroundColor: '#2d2d2d',
+                    padding: '10px',
+                    borderRadius: '4px',
+                    overflowX: 'auto',
+                    color: '#ffffff',
+                    fontSize: '14px',
+                    fontFamily: 'Consolas, monospace',
+                    lineHeight: '1.4',
+                    marginTop: '5px'
+                  }}
+                >
+                  {programOutput}
+                </pre>
+              </div>
+            )}
+            
             {/* Show transpiled code in terminal if requested */}
             {showTranspiledInTerminal && transpiledCode && (
               <div 
                 className="transpiled-code-in-terminal"
                 style={{
                   marginTop: '15px',
+                  marginLeft: '15px',
                   borderTop: '1px solid #555',
                   paddingTop: '10px'
                 }}

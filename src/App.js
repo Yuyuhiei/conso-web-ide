@@ -5,7 +5,7 @@ import Terminal from './components/Terminal';
 import TokenTable from './components/TokenTable';
 import Sidebar from './components/Sidebar';
 import TranspiledCodeView from './components/TranspiledCodeView'; // Import the new component
-import { analyzeSemantics, transpileToC } from './services/api'; // Import the new API function
+import { analyzeSemantics, runConsoCode } from './services/api'; // Import the new API function
 import websocketService from './services/websocketService';
 import './App.css';
 
@@ -51,8 +51,9 @@ const App = () => {
     return savedTheme || 'conso-dark';
   });
   
-  // Transpiler state
+  // Transpiler and execution state
   const [transpiledCode, setTranspiledCode] = useState('');
+  const [programOutput, setProgramOutput] = useState('');
   const [showTranspiledCode, setShowTranspiledCode] = useState(false);
   
   // Current file accessor
@@ -124,6 +125,7 @@ const App = () => {
     );
     
     setCodeChanged(true); // Mark that code has changed to clear semantic analysis messages
+    setProgramOutput(''); // Clear previous program output
     
     // Only run the analyzer if we're not already analyzing
     // This prevents too many requests
@@ -139,38 +141,47 @@ const App = () => {
     }
   };
 
-  // Combined run function - does semantic analysis and then transpilation
+  // Run the Conso code (transpile, compile, execute)
   const handleRun = async () => {
     try {
       setIsRunning(true);
       setCodeChanged(false); // Reset the code changed flag when running
+      setProgramOutput(''); // Clear previous output
       
-      // Step 1: Run semantic analysis
-      setOutput(prev => `${prev}\nRunning semantic analysis...`);
-      const semanticResponse = await analyzeSemantics(currentFile.content);
+      setOutput(prev => `${prev}\nRunning code...`);
       
-      if (!semanticResponse.success) {
-        setOutput(prev => `${prev}\nSemantic errors found:\n${semanticResponse.errors.map(err => `  - ${err}`).join('\n')}`);
-        setIsRunning(false);
-        return; // Stop here if semantic analysis fails
+      // Run the code through the server (which does validation, transpilation, compilation, and execution)
+      const response = await runConsoCode(currentFile.content);
+      
+      if (!response.success) {
+        // Handle different types of errors based on the phase
+        switch (response.phase) {
+          case 'lexical':
+            setOutput(prev => `${prev}\nLexical errors found:\n${response.errors.map(err => `  - ${err}`).join('\n')}`);
+            break;
+          case 'syntax':
+            setOutput(prev => `${prev}\nSyntax errors found:\n${response.errors.map(err => `  - ${err}`).join('\n')}`);
+            break;
+          case 'semantic':
+            setOutput(prev => `${prev}\nSemantic errors found:\n${response.errors.map(err => `  - ${err}`).join('\n')}`);
+            break;
+          case 'compilation':
+            setTranspiledCode(response.transpiledCode);
+            setOutput(prev => `${prev}\nCompilation errors:\n${response.errors.map(err => `  - ${err}`).join('\n')}`);
+            break;
+          case 'execution':
+            setTranspiledCode(response.transpiledCode);
+            setOutput(prev => `${prev}\nExecution errors:\n${response.errors.map(err => `  - ${err}`).join('\n')}`);
+            break;
+          default:
+            setOutput(prev => `${prev}\nError: ${response.errors.join('\n')}`);
+        }
+      } else {
+        // Success - store transpiled code and program output
+        setTranspiledCode(response.transpiledCode);
+        setProgramOutput(response.output);
+        setOutput(prev => `${prev}\nProgram executed successfully! ✅`);
       }
-      
-      setOutput(prev => `${prev}\nSemantic analysis completed successfully! ✅`);
-      
-      // Step 2: Transpile to C
-      setOutput(prev => `${prev}\nTranspiling code to C...`);
-      const transpileResponse = await transpileToC(currentFile.content);
-      
-      if (!transpileResponse.success) {
-        setOutput(prev => `${prev}\nTranspilation failed:\n${transpileResponse.errors.map(err => `  - ${err}`).join('\n')}`);
-        setIsRunning(false);
-        return;
-      }
-      
-      // Success - store transpiled code
-      setTranspiledCode(transpileResponse.transpiledCode);
-      setOutput(prev => `${prev}\nTranspilation successful! ✅\nC code is ready to view in the terminal.`);
-      
     } catch (error) {
       setOutput(prev => `${prev}\nError during run: ${error.message}`);
     } finally {

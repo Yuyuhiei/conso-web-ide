@@ -11,6 +11,9 @@ from parser import parse, ParserError
 from semantic import SemanticAnalyzer
 import definitions
 
+import os
+import tempfile
+import subprocess
 from transpiler import transpile, TranspilerError
 
 app = FastAPI(title="Conso Language Server")
