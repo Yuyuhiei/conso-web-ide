@@ -36,6 +36,17 @@ export const analyzeSemantics = async (code) => {
   }
 };
 
+// Function to transpile Conso code to C
+export const transpileToC = async (code) => {
+  try {
+    const response = await axios.post(`${API_URL}/transpile`, { code });
+    return response.data;
+  } catch (error) {
+    console.error('Transpilation error:', error);
+    throw new Error(error.response?.data?.detail || 'Failed to transpile code to C');
+  }
+};
+
 // Check API health
 export const checkHealth = async () => {
   try {
@@ -51,5 +62,6 @@ export default {
   analyzeLexical,
   analyzeSyntax,
   analyzeSemantics,
+  transpileToC,
   checkHealth
 };

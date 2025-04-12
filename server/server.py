@@ -6,11 +6,12 @@ import uvicorn
 import copy
 import re
 
-# Import your existing modules
 from lexer import Lexer
 from parser import parse, ParserError
 from semantic import SemanticAnalyzer
 import definitions
+
+from transpiler import transpile, TranspilerError
 
 app = FastAPI(title="Conso Language Server")
 
@@ -214,3 +215,73 @@ async def health_check():
 # Run the server
 if __name__ == "__main__":
     uvicorn.run("server:app", host="0.0.0.0", port=5000, reload=True)
+
+# Transpile code endpoint
+@app.post("/api/transpile")
+async def transpile_code(request: CodeRequest):
+    try:
+        # Get normalized code
+        input_code = normalize_code(request.code)
+        
+        # First run lexical and syntax analysis to ensure code is valid
+        lexer = Lexer(input_code)
+        tokens, lexer_errors = lexer.make_tokens()
+        
+        if lexer_errors:
+            return {
+                "success": False,
+                "errors": [f"Lexical Error: {str(err)}" for err in lexer_errors],
+                "transpiledCode": None
+            }
+        
+        # Clear and populate the global token list
+        definitions.token.clear()
+        for tok in tokens:
+            definitions.token.append((tok.type, tok.line, tok.column))
+        
+        # Run parser
+        result, parser_errors, syntax_valid = parse()
+        
+        if not syntax_valid:
+            return {
+                "success": False,
+                "errors": [f"Syntax Error: {err}" for err in parser_errors],
+                "transpiledCode": None
+            }
+        
+        # Create semantic tokens in the expected format
+        semantic_tokens = [(tok.type, tok.value, tok.line, tok.column) for tok in tokens]
+        
+        # Create analyzer instance and run analysis
+        analyzer = SemanticAnalyzer()
+        semantic_valid, semantic_errors = analyzer.analyze(semantic_tokens)
+        
+        if not semantic_valid:
+            return {
+                "success": False,
+                "errors": [f"Semantic Error: {err}" for err in semantic_errors],
+                "transpiledCode": None
+            }
+        
+        # If all validations pass, transpile the code to C
+        transpiled_code = transpile(input_code)
+        
+        return {
+            "success": True,
+            "errors": [],
+            "transpiledCode": transpiled_code
+        }
+        
+    except TranspilerError as e:
+        return {
+            "success": False,
+            "errors": [f"Transpilation Error: {str(e)}"],
+            "transpiledCode": None
+        }
+    except Exception as e:
+        print(f"Transpilation Error: {str(e)}")
+        return {
+            "success": False,
+            "errors": [f"Transpilation Error: {str(e)}"],
+            "transpiledCode": None
+        }

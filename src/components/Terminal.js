@@ -1,17 +1,19 @@
 import React, { useRef, useEffect, useState } from 'react';
 
-const Terminal = ({ output, codeChanged }) => {
+const Terminal = ({ output, codeChanged, transpiledCode }) => {
   const terminalRef = useRef(null);
   const resizeHandleRef = useRef(null);
   const [height, setHeight] = useState(200); // Default height
   const [isDragging, setIsDragging] = useState(false);
   const [startY, setStartY] = useState(0);
   const [startHeight, setStartHeight] = useState(0);
+  const [showTranspiledInTerminal, setShowTranspiledInTerminal] = useState(false);
   
   const [categoryMessages, setCategoryMessages] = useState({
     lexical: null,
     syntax: null,
-    semantic: null
+    semantic: null,
+    transpilation: null // New category for transpilation messages
   });
 
   // Auto scroll to bottom when new output is added
@@ -19,17 +21,28 @@ const Terminal = ({ output, codeChanged }) => {
     if (terminalRef.current) {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
-  }, [categoryMessages]);
+  }, [categoryMessages, showTranspiledInTerminal]);
   
   // Clear semantic analysis message when code changes
   useEffect(() => {
     if (codeChanged) {
       setCategoryMessages(prev => ({
         ...prev,
-        semantic: null
+        semantic: null,
+        transpilation: null // Also clear transpilation message
       }));
     }
   }, [codeChanged]);
+
+  // Update transpilation state when transpiled code changes
+  useEffect(() => {
+    if (transpiledCode) {
+      setCategoryMessages(prev => ({
+        ...prev,
+        transpilation: "Transpilation successful! C code is ready."
+      }));
+    }
+  }, [transpiledCode]);
 
   // Setup resize handlers
   useEffect(() => {
@@ -76,7 +89,8 @@ const Terminal = ({ output, codeChanged }) => {
       setCategoryMessages({
         lexical: null,
         syntax: null,
-        semantic: null
+        semantic: null,
+        transpilation: null
       });
       return;
     }
@@ -88,7 +102,8 @@ const Terminal = ({ output, codeChanged }) => {
     const newCategoryMessages = {
       lexical: null,
       syntax: null,
-      semantic: codeChanged ? null : categoryMessages.semantic // If code has changed, clear semantic message
+      semantic: codeChanged ? null : categoryMessages.semantic, // If code has changed, clear semantic message
+      transpilation: codeChanged ? null : categoryMessages.transpilation // If code has changed, clear transpilation message
     };
     
     lines.forEach(line => {
@@ -107,16 +122,21 @@ const Terminal = ({ output, codeChanged }) => {
         // Only update semantic message if code hasn't changed
         newCategoryMessages.semantic = line;
       }
+      // Transpilation messages
+      else if (line.includes('Transpil') && !codeChanged) {
+        // Only update transpilation message if code hasn't changed
+        newCategoryMessages.transpilation = line;
+      }
     });
     
     setCategoryMessages(newCategoryMessages);
-  }, [output, categoryMessages.semantic, codeChanged]);
+  }, [output, categoryMessages.semantic, categoryMessages.transpilation, codeChanged]);
 
   // Get line type based on content to apply appropriate styling
   const getLineType = (line) => {
     if (!line) return 'info';
     
-    if (line.includes('Error') || line.includes('❌') || line.includes('rejected')) {
+    if (line.includes('Error') || line.includes('❌') || line.includes('rejected') || line.includes('failed')) {
       return 'error';
     } else if (line.includes('✅') || line.includes('accepted') || 
               line.includes('Syntactically correct') || line.includes('successfully')) {
@@ -126,6 +146,11 @@ const Terminal = ({ output, codeChanged }) => {
     } else {
       return 'info';
     }
+  };
+
+  // Toggle showing transpiled code in terminal
+  const toggleTranspiledCode = () => {
+    setShowTranspiledInTerminal(!showTranspiledInTerminal);
   };
 
   // Convert category messages to array for rendering
@@ -153,6 +178,14 @@ const Terminal = ({ output, codeChanged }) => {
         category: 'Semantic',
         text: categoryMessages.semantic,
         type: getLineType(categoryMessages.semantic)
+      });
+    }
+
+    if (categoryMessages.transpilation) {
+      result.push({
+        category: 'Transpilation',
+        text: categoryMessages.transpilation,
+        type: getLineType(categoryMessages.transpilation)
       });
     }
     
@@ -200,6 +233,22 @@ const Terminal = ({ output, codeChanged }) => {
         }}
       >
         <div>Terminal</div>
+        {transpiledCode && (
+          <button 
+            onClick={toggleTranspiledCode} 
+            style={{ 
+              backgroundColor: 'rgba(255,255,255,0.1)', 
+              border: 'none', 
+              color: 'white', 
+              padding: '2px 8px', 
+              borderRadius: '3px', 
+              cursor: 'pointer',
+              fontSize: '12px' 
+            }}
+          >
+            {showTranspiledInTerminal ? 'Hide C Code' : 'Show C Code'}
+          </button>
+        )}
       </div>
       
       <div 
@@ -244,26 +293,59 @@ const Terminal = ({ output, codeChanged }) => {
             Ready
           </div>
         ) : (
-          displayLines.map((item, index) => (
-            <div 
-              key={index} 
-              className={`terminal-line ${item.type}`}
-              style={{
-                color: item.type === 'error' ? '#f48771' : 
-                       item.type === 'success' ? '#89d185' : 
-                       item.type === 'warning' ? '#cca700' : '#d4d4d4',
-                marginBottom: '10px',
-                padding: '5px 0',
-                marginLeft: '15px',
-                borderBottom: index < displayLines.length - 1 ? '1px solid #333' : 'none'
-              }}
-            >
-              <span style={{ fontWeight: 'bold', marginRight: '8px' }}>
-                {item.category}:
-              </span>
-              {item.text}
-            </div>
-          ))
+          <>
+            {displayLines.map((item, index) => (
+              <div 
+                key={index} 
+                className={`terminal-line ${item.type}`}
+                style={{
+                  color: item.type === 'error' ? '#f48771' : 
+                         item.type === 'success' ? '#89d185' : 
+                         item.type === 'warning' ? '#cca700' : '#d4d4d4',
+                  marginBottom: '10px',
+                  padding: '5px 0',
+                  marginLeft: '15px',
+                  borderBottom: index < displayLines.length - 1 ? '1px solid #333' : 'none'
+                }}
+              >
+                <span style={{ fontWeight: 'bold', marginRight: '8px' }}>
+                  {item.category}:
+                </span>
+                {item.text}
+              </div>
+            ))}
+            
+            {/* Show transpiled code in terminal if requested */}
+            {showTranspiledInTerminal && transpiledCode && (
+              <div 
+                className="transpiled-code-in-terminal"
+                style={{
+                  marginTop: '15px',
+                  borderTop: '1px solid #555',
+                  paddingTop: '10px'
+                }}
+              >
+                <div style={{ fontWeight: 'bold', marginBottom: '10px', color: '#89d185' }}>
+                  Generated C Code:
+                </div>
+                <pre
+                  style={{
+                    backgroundColor: '#2d2d2d',
+                    padding: '10px',
+                    borderRadius: '4px',
+                    overflowX: 'auto',
+                    color: '#d4d4d4',
+                    fontSize: '13px',
+                    fontFamily: 'Consolas, monospace',
+                    lineHeight: '1.4',
+                    marginTop: '5px'
+                  }}
+                >
+                  {transpiledCode}
+                </pre>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

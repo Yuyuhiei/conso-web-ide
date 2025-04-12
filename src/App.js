@@ -4,7 +4,8 @@ import CodeEditor from './components/NewEditor';
 import Terminal from './components/Terminal';
 import TokenTable from './components/TokenTable';
 import Sidebar from './components/Sidebar';
-import { analyzeSemantics } from './services/api';
+import TranspiledCodeView from './components/TranspiledCodeView'; // Import the new component
+import { analyzeSemantics, transpileToC } from './services/api'; // Import the new API function
 import websocketService from './services/websocketService';
 import './App.css';
 
@@ -42,12 +43,17 @@ const App = () => {
   const [semanticEnabled, setSemanticEnabled] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [codeChanged, setCodeChanged] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
   
   // Theme state
   const [currentTheme, setCurrentTheme] = useState(() => {
     const savedTheme = localStorage.getItem('conso-theme');
     return savedTheme || 'conso-dark';
   });
+  
+  // Transpiler state
+  const [transpiledCode, setTranspiledCode] = useState('');
+  const [showTranspiledCode, setShowTranspiledCode] = useState(false);
   
   // Current file accessor
   const currentFile = files.find(file => file.id === currentFileId) || files[0];
@@ -133,21 +139,64 @@ const App = () => {
     }
   };
 
-  // Run semantic analysis
-  const runSemanticAnalysis = async () => {
+  // Combined run function - does semantic analysis and then transpilation
+  const handleRun = async () => {
     try {
-      setCodeChanged(false); // Reset the code changed flag when running semantic analysis
-      setOutput(prev => `${prev}\nRunning semantic analysis...`);
-      const response = await analyzeSemantics(currentFile.content);
+      setIsRunning(true);
+      setCodeChanged(false); // Reset the code changed flag when running
       
-      if (response.success) {
-        setOutput(prev => `${prev}\nSemantic analysis completed successfully!`);
-      } else {
-        setOutput(prev => `${prev}\nSemantic errors found:\n${response.errors.map(err => `  - ${err}`).join('\n')}`);
+      // Step 1: Run semantic analysis
+      setOutput(prev => `${prev}\nRunning semantic analysis...`);
+      const semanticResponse = await analyzeSemantics(currentFile.content);
+      
+      if (!semanticResponse.success) {
+        setOutput(prev => `${prev}\nSemantic errors found:\n${semanticResponse.errors.map(err => `  - ${err}`).join('\n')}`);
+        setIsRunning(false);
+        return; // Stop here if semantic analysis fails
       }
+      
+      setOutput(prev => `${prev}\nSemantic analysis completed successfully! ✅`);
+      
+      // Step 2: Transpile to C
+      setOutput(prev => `${prev}\nTranspiling code to C...`);
+      const transpileResponse = await transpileToC(currentFile.content);
+      
+      if (!transpileResponse.success) {
+        setOutput(prev => `${prev}\nTranspilation failed:\n${transpileResponse.errors.map(err => `  - ${err}`).join('\n')}`);
+        setIsRunning(false);
+        return;
+      }
+      
+      // Success - store transpiled code
+      setTranspiledCode(transpileResponse.transpiledCode);
+      setOutput(prev => `${prev}\nTranspilation successful! ✅\nC code is ready to view in the terminal.`);
+      
     } catch (error) {
-      setOutput(prev => `${prev}\nSemantic Analysis Error: ${error.message}`);
+      setOutput(prev => `${prev}\nError during run: ${error.message}`);
+    } finally {
+      setIsRunning(false);
     }
+  };
+
+  // Close the transpiled code view
+  const handleCloseTranspiledView = () => {
+    setShowTranspiledCode(false);
+  };
+
+  // Save transpiled C code to file
+  const saveTranspiledCode = () => {
+    if (!transpiledCode) return;
+    
+    const blob = new Blob([transpiledCode], { type: 'text/plain' });
+    const link = document.createElement('a');
+    
+    // Get the base name of the current file
+    const baseName = currentFile.name.replace('.cns', '');
+    link.download = `${baseName}.c`;
+    
+    link.href = window.URL.createObjectURL(blob);
+    link.click();
+    setOutput(prev => `${prev}\nTranspiled C code saved: ${baseName}.c`);
   };
 
   // Handle file save
@@ -308,20 +357,53 @@ const App = () => {
           >
             Open from Disk
           </button>
+          {/* Combined "Run" button that does both semantic analysis and transpilation */}
           <button 
-            onClick={runSemanticAnalysis} 
-            disabled={!semanticEnabled}
+            onClick={handleRun} 
+            disabled={!semanticEnabled || isRunning}
             style={{ 
-              backgroundColor: semanticEnabled ? '#0d47a1' : '#444',
+              backgroundColor: semanticEnabled && !isRunning ? '#2e7d32' : '#444',
               color: 'white', 
               border: 'none', 
               padding: '6px 12px', 
               borderRadius: '4px', 
-              cursor: semanticEnabled ? 'pointer' : 'not-allowed',
-              opacity: semanticEnabled ? 1 : 0.7
+              cursor: semanticEnabled && !isRunning ? 'pointer' : 'not-allowed',
+              opacity: semanticEnabled && !isRunning ? 1 : 0.7
             }}
           >
-            Semantic Analysis
+            {isRunning ? 'Running...' : 'Run'}
+          </button>
+          {/* View C Code button */}
+          <button 
+            onClick={() => setShowTranspiledCode(true)} 
+            disabled={!transpiledCode}
+            style={{ 
+              backgroundColor: transpiledCode ? '#4a148c' : '#444',
+              color: 'white', 
+              border: 'none', 
+              padding: '6px 12px', 
+              borderRadius: '4px', 
+              cursor: transpiledCode ? 'pointer' : 'not-allowed',
+              opacity: transpiledCode ? 1 : 0.7
+            }}
+          >
+            View C Code
+          </button>
+          {/* Save C Code button */}
+          <button 
+            onClick={saveTranspiledCode} 
+            disabled={!transpiledCode}
+            style={{ 
+              backgroundColor: transpiledCode ? '#ef6c00' : '#444',
+              color: 'white', 
+              border: 'none', 
+              padding: '6px 12px', 
+              borderRadius: '4px', 
+              cursor: transpiledCode ? 'pointer' : 'not-allowed',
+              opacity: transpiledCode ? 1 : 0.7
+            }}
+          >
+            Save C Code
           </button>
           <button 
             onClick={clearTerminal}
@@ -373,14 +455,27 @@ const App = () => {
               theme={currentTheme}
             />
             
-            Token Table on the right side
+            {/* Token Table on the right side */}
             <TokenTable tokens={tokens} />
+            
+            {/* Transpiled Code View */}
+            {showTranspiledCode && (
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100 }}>
+                <TranspiledCodeView 
+                  code={transpiledCode} 
+                  visible={showTranspiledCode} 
+                  onClose={handleCloseTranspiledView}
+                  onSave={saveTranspiledCode}
+                />
+              </div>
+            )}
           </div>
           
           {/* Terminal at the bottom */}
           <Terminal 
             output={output} 
             codeChanged={codeChanged} 
+            transpiledCode={transpiledCode}
           />
         </div>
       </div>
