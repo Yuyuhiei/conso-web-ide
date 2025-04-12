@@ -50,11 +50,15 @@ export const transpileToC = async (code) => {
 // Function to run Conso code (transpile, compile, and execute)
 export const runConsoCode = async (code) => {
   try {
+    console.log("Sending run request to server with code:", code.substring(0, 50) + "...");
     const response = await axios.post(`${API_URL}/run`, { code });
+    console.log("Raw API response:", response);
+    console.log("Response data:", response.data);
+    console.log("Output field:", response.data.output); // Check if this exists and what it contains
     return response.data;
   } catch (error) {
     console.error('Code execution error:', error);
-    throw new Error(error.response?.data?.detail || 'Failed to execute code');
+    throw error;
   }
 };
 

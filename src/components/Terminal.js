@@ -16,6 +16,11 @@ const Terminal = ({ output, codeChanged, transpiledCode, programOutput }) => {
     execution: null // For program execution results
   });
 
+  // In the Terminal.js component, add debugging
+  useEffect(() => {
+    console.log("Terminal received programOutput:", programOutput);
+  }, [programOutput]);
+
   // Auto scroll to bottom when new output is added
   useEffect(() => {
     if (terminalRef.current) {

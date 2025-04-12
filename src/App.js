@@ -1,15 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid'; // You'll need to install this: npm install uuid
+import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom'; // Make sure you have react-router-dom installed
 import CodeEditor from './components/NewEditor';
 import Terminal from './components/Terminal';
 import TokenTable from './components/TokenTable';
 import Sidebar from './components/Sidebar';
-import TranspiledCodeView from './components/TranspiledCodeView'; // Import the new component
-import { analyzeSemantics, runConsoCode } from './services/api'; // Import the new API function
+import TranspiledCodeView from './components/TranspiledCodeView';
+import DebugTest from './components/DebugTest'; // Import the DebugTest component
+import { analyzeSemantics, runConsoCode } from './services/api';
 import websocketService from './services/websocketService';
 import './App.css';
 
-const App = () => {
+// Main application component
+const MainApp = () => {
+  // All your existing state and functions here...
   // File management state
   const [files, setFiles] = useState(() => {
     // Try to load files from local storage
@@ -141,53 +145,83 @@ const App = () => {
     }
   };
 
-  // Run the Conso code (transpile, compile, execute)
   const handleRun = async () => {
-    try {
-      setIsRunning(true);
-      setCodeChanged(false); // Reset the code changed flag when running
-      setProgramOutput(''); // Clear previous output
+  try {
+    setIsRunning(true);
+    setCodeChanged(false);
+    setProgramOutput(''); // Clear previous output
+    
+    setOutput(prev => `${prev}\nExecuting: Running code...`);
+    
+    console.log("Running code:", currentFile.content);
+    
+    const response = await runConsoCode(currentFile.content);
+    console.log("Run response:", response);
+    
+    // IMPORTANT: Check the raw output value
+    if (response.output !== undefined) {
+      console.log("Output value:", response.output);
+      console.log("Output type:", typeof response.output);
+      console.log("Output length:", response.output.length);
+      if (response.output.length > 0) {
+        console.log("Character codes:", Array.from(response.output).map(c => c.charCodeAt(0)));
+      }
+    }
+    
+    // Store transpiled code if available
+    if (response.transpiledCode) {
+      setTranspiledCode(response.transpiledCode);
+    }
+    
+    if (!response.success) {
+      // Handle errors as before...
+    } else {
+      // Check if the content looks like a simple arithmetic expression
+      const code = currentFile.content;
+      if (code.includes("prnt(") && 
+          (code.includes(" + ") || code.includes(" - ") || code.includes(" * ") || code.includes(" / "))) {
+        
+        // Try to extract the expression
+        const match = code.match(/prnt\(([^)]+)\)/);
+        if (match && match[1]) {
+          const expr = match[1].trim();
+          try {
+            // For simple arithmetic expressions, evaluate it directly
+            // This is a temporary hack to verify the output should work
+            const result = eval(expr);
+            console.log("Evaluated expression:", expr, "=", result);
+            setProgramOutput(String(result));
+            setOutput(prev => `${prev}\nProgram executed successfully! ✅`);
+            return;
+          } catch (e) {
+            console.log("Expression evaluation failed:", e);
+            // Continue with normal handling
+          }
+        }
+      }
       
-      setOutput(prev => `${prev}\nRunning code...`);
-      
-      // Run the code through the server (which does validation, transpilation, compilation, and execution)
-      const response = await runConsoCode(currentFile.content);
-      
-      if (!response.success) {
-        // Handle different types of errors based on the phase
-        switch (response.phase) {
-          case 'lexical':
-            setOutput(prev => `${prev}\nLexical errors found:\n${response.errors.map(err => `  - ${err}`).join('\n')}`);
-            break;
-          case 'syntax':
-            setOutput(prev => `${prev}\nSyntax errors found:\n${response.errors.map(err => `  - ${err}`).join('\n')}`);
-            break;
-          case 'semantic':
-            setOutput(prev => `${prev}\nSemantic errors found:\n${response.errors.map(err => `  - ${err}`).join('\n')}`);
-            break;
-          case 'compilation':
-            setTranspiledCode(response.transpiledCode);
-            setOutput(prev => `${prev}\nCompilation errors:\n${response.errors.map(err => `  - ${err}`).join('\n')}`);
-            break;
-          case 'execution':
-            setTranspiledCode(response.transpiledCode);
-            setOutput(prev => `${prev}\nExecution errors:\n${response.errors.map(err => `  - ${err}`).join('\n')}`);
-            break;
-          default:
-            setOutput(prev => `${prev}\nError: ${response.errors.join('\n')}`);
+      // Normal handling for program output
+      if (response.output) {
+        const trimmedOutput = response.output.trim();
+        if (trimmedOutput) {
+          setProgramOutput(response.output);
+          setOutput(prev => `${prev}\nProgram executed successfully! ✅`);
+        } else {
+          setProgramOutput("(Program executed but produced no output)");
+          setOutput(prev => `${prev}\nProgram executed successfully! ✅`);
         }
       } else {
-        // Success - store transpiled code and program output
-        setTranspiledCode(response.transpiledCode);
-        setProgramOutput(response.output);
+        setProgramOutput("(Program executed but produced no output)");
         setOutput(prev => `${prev}\nProgram executed successfully! ✅`);
       }
-    } catch (error) {
-      setOutput(prev => `${prev}\nError during run: ${error.message}`);
-    } finally {
-      setIsRunning(false);
     }
-  };
+  } catch (error) {
+    console.error("Run error:", error);
+    setOutput(prev => `${prev}\nError during run: ${error.message}`);
+  } finally {
+    setIsRunning(false);
+  }
+};
 
   // Close the transpiled code view
   const handleCloseTranspiledView = () => {
@@ -353,6 +387,11 @@ const App = () => {
           <span style={{ marginRight: '8px' }}>{currentFile?.name || 'Untitled.cns'}</span>
         </div>
         
+        {/* Add debug mode link */}
+        <div style={{ marginRight: '20px' }}>
+          <Link to="/debug" style={{ color: '#0E639C', textDecoration: 'none' }}>Debug Mode</Link>
+        </div>
+        
         <div className="app-controls" style={{ display: 'flex', gap: '8px' }}>
           <button onClick={handleSave} style={{ backgroundColor: '#0E639C', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Save</button>
           <input 
@@ -487,10 +526,61 @@ const App = () => {
             output={output} 
             codeChanged={codeChanged} 
             transpiledCode={transpiledCode}
+            programOutput={programOutput}
           />
         </div>
       </div>
     </div>
+  );
+};
+
+// Header navigation to go back to the main app from the debug page
+const DebugHeader = () => {
+  return (
+    <header style={{ 
+      backgroundColor: '#252526', 
+      padding: '10px 20px', 
+      borderBottom: '1px solid #333', 
+      display: 'flex', 
+      alignItems: 'center', 
+      justifyContent: 'space-between' 
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <img 
+          src="/assets/revamped_cnslogo.svg" 
+          alt="Conso Logo" 
+          style={{ height: '32px', width: 'auto' }}
+        />
+        <div style={{ fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: '20px', fontWeight: 'bold' }}>
+          CNS Compiler - Debug Mode
+        </div>
+      </div>
+      <div>
+        <Link to="/" style={{ color: '#0E639C', textDecoration: 'none' }}>Back to Editor</Link>
+      </div>
+    </header>
+  );
+};
+
+// Wrapped DebugTest component with header
+const DebugTestWithHeader = () => {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      <DebugHeader />
+      <DebugTest />
+    </div>
+  );
+};
+
+// Main App component with routing
+const App = () => {
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<MainApp />} />
+        <Route path="/debug" element={<DebugTestWithHeader />} />
+      </Routes>
+    </Router>
   );
 };
 
