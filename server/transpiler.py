@@ -3,6 +3,7 @@ Conso to C Transpiler
 This module converts Conso code to C code, assuming the input has already passed
 lexical, syntax and semantic analysis.
 """
+import sys
 
 class ConsoTranspiler:
     def __init__(self):
@@ -246,62 +247,49 @@ char* conso_concat(const char* str1, const char* str2) {
         
         return line  # Type not found, return unchanged
 
+    # Add this function to your ConsoTranspiler class 
     def _process_print(self, line):
-        """Process a print statement"""
-        # Handle print statements like "prnt("Hello");"
-        # Extract the content inside the parentheses
+        """Process a print statement with a more robust approach"""
+        # Print the input for debugging
+        print(f"Processing print line: '{line}'")
+        
+        # Handle print statements like "prnt("Hello");" or "prnt(5 + 5);"
         if not line.endswith(';'):
             line += ';'  # Add semicolon if missing
         
+        # Extract the content inside the parentheses
         content = line[line.find('(')+1:line.rfind(')')]
+        print(f"Print content: '{content}'")
         
-        # Simple case: just a string literal
+        # Case 1: String literal - prnt("Hello");
         if content.startswith('"') and content.endswith('"'):
-            return f"printf({content});"
+            # Make sure the string includes a newline
+            string_content = content[1:-1]  # Remove the quotes
+            if "\\n" not in string_content:
+                string_content += "\\n"
+            result = f"printf(\"{string_content}\");"
+            print(f"Generated string print: '{result}'")
+            return result
         
-        # Add newline to format string for printf
-        if not ',' in content:
-            # Single expression - determine its type
-            if content.startswith('"') and content.endswith('"'):
-                # String literal
-                return f"printf({content}\\n);"
-            elif content.isdigit() or (content[0] == '-' and content[1:].isdigit()):
-                # Integer
-                return f"printf(\"%d\\n\", {content});"
-            elif '.' in content and all(c.isdigit() or c == '.' or (i == 0 and c == '-') for i, c in enumerate(content)):
-                # Float/double
-                return f"printf(\"%f\\n\", {content});"
-            else:
-                # Variable or expression - assume it's an integer by default
-                return f"printf(\"%d\\n\", {content});"
-        else:
-            # Multiple arguments - we need to handle format specifiers
+        # Case 2: Expression with format string - prnt("Value: %d", x);
+        elif content.startswith('"') and ',' in content:
             parts = content.split(',', 1)
-            if parts[0].startswith('"') and parts[0].endswith('"'):
-                # First argument is a format string
-                format_str = parts[0]
-                args = parts[1].strip()
-                # Add newline if not present
-                if not "\\n" in format_str:
-                    format_str = format_str[:-1] + "\\n" + format_str[-1:]
-                return f"printf({format_str}, {args});"
-            else:
-                # Multiple values to print - create a format string
-                values = [v.strip() for v in content.split(',')]
-                format_parts = []
-                for value in values:
-                    if value.startswith('"') and value.endswith('"'):
-                        format_parts.append("%s")
-                    elif value.isdigit() or (value[0] == '-' and value[1:].isdigit()):
-                        format_parts.append("%d")
-                    elif '.' in value and all(c.isdigit() or c == '.' or (i == 0 and c == '-') for i, c in enumerate(value)):
-                        format_parts.append("%f")
-                    else:
-                        # Default to %d for variables
-                        format_parts.append("%d")
-                
-                format_str = ' '.join(format_parts) + "\\n"
-                return f"printf(\"{format_str}\", {content});"
+            format_str = parts[0][1:-1]  # Remove quotes
+            args = parts[1].strip()
+            
+            # Add newline if not present
+            if "\\n" not in format_str:
+                format_str += "\\n"
+            
+            result = f"printf(\"{format_str}\", {args});"
+            print(f"Generated format print: '{result}'")
+            return result
+        
+        # Case 3: Expression or variable - prnt(5 + 5); or prnt(x);
+        else:
+            result = f"printf(\"%d\\n\", {content});"
+            print(f"Generated expression print: '{result}'")
+            return result
 
     def _process_input(self, line):
         """Process an input statement"""

@@ -215,26 +215,30 @@ async def semantic_analysis(request: CodeRequest):
 async def health_check():
     return {"status": "healthy", "message": "Conso Language Server is running"}
 
-# Run the server
-if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=5000, reload=True)
-
-# Transpile code endpoint
-@app.post("/api/transpile")
-async def transpile_code(request: CodeRequest):
+# Run Conso code endpoint with improved error handling
+@app.post("/api/run")
+async def run_code(request: CodeRequest):
+    """Run Conso code through transpilation, compilation, and execution."""
+    import tempfile
+    import os
+    import sys
+    import subprocess
+    
     try:
         # Get normalized code
         input_code = normalize_code(request.code)
         
-        # First run lexical and syntax analysis to ensure code is valid
+        # First run lexical analysis to get tokens
         lexer = Lexer(input_code)
         tokens, lexer_errors = lexer.make_tokens()
         
         if lexer_errors:
             return {
                 "success": False,
-                "errors": [f"Lexical Error: {str(err)}" for err in lexer_errors],
-                "transpiledCode": None
+                "phase": "lexical",
+                "errors": [str(err) for err in lexer_errors],
+                "transpiledCode": None,
+                "output": None
             }
         
         # Clear and populate the global token list
@@ -248,8 +252,10 @@ async def transpile_code(request: CodeRequest):
         if not syntax_valid:
             return {
                 "success": False,
-                "errors": [f"Syntax Error: {err}" for err in parser_errors],
-                "transpiledCode": None
+                "phase": "syntax",
+                "errors": parser_errors,
+                "transpiledCode": None,
+                "output": None
             }
         
         # Create semantic tokens in the expected format
@@ -262,29 +268,313 @@ async def transpile_code(request: CodeRequest):
         if not semantic_valid:
             return {
                 "success": False,
-                "errors": [f"Semantic Error: {err}" for err in semantic_errors],
-                "transpiledCode": None
+                "phase": "semantic",
+                "errors": semantic_errors,
+                "transpiledCode": None,
+                "output": None
             }
         
         # If all validations pass, transpile the code to C
-        transpiled_code = transpile(input_code)
+        try:
+            # Import the transpiler here to avoid circular imports
+            from transpiler import transpile
+            transpiled_code = transpile(input_code)
+        except Exception as e:
+            import traceback
+            print(f"Transpilation error: {str(e)}")
+            print(traceback.format_exc())
+            return {
+                "success": False,
+                "phase": "transpilation",
+                "errors": [f"Transpilation error: {str(e)}"],
+                "transpiledCode": None,
+                "output": None
+            }
         
-        return {
-            "success": True,
-            "errors": [],
-            "transpiledCode": transpiled_code
-        }
+        # Compile and run the C code
+        temp_dir = None
         
-    except TranspilerError as e:
-        return {
-            "success": False,
-            "errors": [f"Transpilation Error: {str(e)}"],
-            "transpiledCode": None
-        }
+        try:
+            # Create a temporary directory for our files
+            temp_dir = tempfile.mkdtemp(prefix="conso_")
+            c_file = os.path.join(temp_dir, "program.c")
+            
+            # Write C code to file
+            with open(c_file, 'w') as f:
+                f.write(transpiled_code)
+            
+            # Determine executable name based on platform
+            if sys.platform == 'win32':
+                executable = os.path.join(temp_dir, "program.exe")
+            else:
+                executable = os.path.join(temp_dir, "program")
+                
+            # Compile the C code
+            compile_cmd = ['gcc', c_file, '-o', executable]
+            compile_result = subprocess.run(
+                compile_cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if compile_result.returncode != 0:
+                return {
+                    "success": False,
+                    "phase": "compilation",
+                    "errors": [compile_result.stderr],
+                    "transpiledCode": transpiled_code,
+                    "output": None
+                }
+            
+            # Run the compiled executable
+            run_result = subprocess.run(
+                [executable],
+                capture_output=True,
+                text=True,
+                timeout=5  # 5-second timeout to prevent infinite loops
+            )
+            
+            # Log the output for debugging
+            print(f"Program stdout: '{run_result.stdout}'")
+            print(f"Program stderr: '{run_result.stderr}'")
+            
+            # Check for errors during execution
+            if run_result.returncode != 0:
+                return {
+                    "success": False,
+                    "phase": "execution",
+                    "errors": [run_result.stderr if run_result.stderr else "Program exited with non-zero status"],
+                    "transpiledCode": transpiled_code,
+                    "output": None
+                }
+            
+            # Success case
+            return {
+                "success": True,
+                "phase": "execution",
+                "errors": [],
+                "transpiledCode": transpiled_code,
+                "output": run_result.stdout
+            }
+        
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "phase": "execution",
+                "errors": ["Execution timed out. Your program may have an infinite loop."],
+                "transpiledCode": transpiled_code,
+                "output": None
+            }
+        except Exception as e:
+            import traceback
+            print(f"Execution error: {str(e)}")
+            print(traceback.format_exc())
+            return {
+                "success": False,
+                "phase": "execution",
+                "errors": [f"Execution error: {str(e)}"],
+                "transpiledCode": transpiled_code,
+                "output": None
+            }
+        finally:
+            # Clean up temporary files
+            try:
+                if temp_dir and os.path.exists(temp_dir):
+                    import shutil
+                    shutil.rmtree(temp_dir)
+            except Exception as e:
+                print(f"Cleanup error: {str(e)}")
+            
     except Exception as e:
-        print(f"Transpilation Error: {str(e)}")
+        import traceback
+        print(f"Run error: {str(e)}")
+        print(traceback.format_exc())
+        print(f"API Response: success=True, output={repr(run_result.stdout)}")
         return {
             "success": False,
-            "errors": [f"Transpilation Error: {str(e)}"],
-            "transpiledCode": None
+            "phase": "unknown",
+            "errors": [f"Unexpected error: {str(e)}"],
+            "transpiledCode": None,
+            "output": None
         }
+    
+@app.post("/api/debug-run")
+async def debug_run(request: CodeRequest):
+    """Debug run endpoint that captures detailed information about the execution process."""
+    import tempfile
+    import os
+    import sys
+    import subprocess
+    
+    result = {
+        "success": False,
+        "transpiled_code": None,
+        "executable_path": None,
+        "compilation_output": None,
+        "execution_output": None,
+        "execution_error": None,
+        "steps": []
+    }
+    
+    # Step 1: Transpile the code
+    result["steps"].append({"step": "transpile", "status": "starting"})
+    try:
+        from transpiler import transpile
+        input_code = normalize_code(request.code)
+        transpiled_code = transpile(input_code)
+        result["transpiled_code"] = transpiled_code
+        result["steps"].append({"step": "transpile", "status": "success"})
+    except Exception as e:
+        import traceback
+        result["steps"].append({
+            "step": "transpile", 
+            "status": "error", 
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+        return result
+    
+    # Step 2: Create a C file
+    temp_dir = None
+    c_file = None
+    
+    try:
+        # Create a temp directory
+        temp_dir = tempfile.mkdtemp(prefix="conso_debug_")
+        c_file = os.path.join(temp_dir, "debug_program.c")
+        
+        # Write the C code to file
+        with open(c_file, "w") as f:
+            f.write(transpiled_code)
+        
+        result["steps"].append({
+            "step": "create_c_file", 
+            "status": "success", 
+            "file": c_file,
+            "exists": os.path.exists(c_file),
+            "size": os.path.getsize(c_file) if os.path.exists(c_file) else None
+        })
+    except Exception as e:
+        import traceback
+        result["steps"].append({
+            "step": "create_c_file", 
+            "status": "error", 
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+        return result
+    
+    # Step 3: Compile the C code
+    executable = None
+    
+    try:
+        # Determine the executable name based on platform
+        if sys.platform == "win32":
+            executable = os.path.join(temp_dir, "debug_program.exe")
+        else:
+            executable = os.path.join(temp_dir, "debug_program")
+            
+        result["executable_path"] = executable
+        
+        # Compile command
+        compile_cmd = ["gcc", c_file, "-o", executable]
+        
+        # Run the compilation
+        compile_process = subprocess.run(
+            compile_cmd,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        result["compilation_output"] = {
+            "command": " ".join(compile_cmd),
+            "returncode": compile_process.returncode,
+            "stdout": compile_process.stdout,
+            "stderr": compile_process.stderr
+        }
+        
+        if compile_process.returncode != 0:
+            result["steps"].append({
+                "step": "compile", 
+                "status": "error", 
+                "returncode": compile_process.returncode,
+                "stderr": compile_process.stderr
+            })
+            return result
+            
+        result["steps"].append({
+            "step": "compile", 
+            "status": "success", 
+            "executable": {
+                "path": executable,
+                "exists": os.path.exists(executable),
+                "size": os.path.getsize(executable) if os.path.exists(executable) else None
+            }
+        })
+    except Exception as e:
+        import traceback
+        result["steps"].append({
+            "step": "compile", 
+            "status": "error", 
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+        return result
+    
+    # Step 4: Run the program
+    try:
+        # Run the executable
+        run_cmd = [executable]
+        
+        run_process = subprocess.run(
+            run_cmd,
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        result["execution_output"] = run_process.stdout
+        result["execution_error"] = run_process.stderr
+        
+        result["steps"].append({
+            "step": "execute", 
+            "status": "success" if run_process.returncode == 0 else "error", 
+            "returncode": run_process.returncode,
+            "stdout": run_process.stdout,
+            "stderr": run_process.stderr,
+            "stdout_bytes": [ord(c) for c in run_process.stdout[:20]] if run_process.stdout else None,
+            "stderr_bytes": [ord(c) for c in run_process.stderr[:20]] if run_process.stderr else None
+        })
+        
+        # Mark success if execution completed without errors
+        if run_process.returncode == 0:
+            result["success"] = True
+    except Exception as e:
+        import traceback
+        result["steps"].append({
+            "step": "execute", 
+            "status": "error", 
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+    finally:
+        # Clean up temporary files
+        try:
+            if temp_dir and os.path.exists(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir)
+                result["steps"].append({"step": "cleanup", "status": "success"})
+        except Exception as e:
+            result["steps"].append({
+                "step": "cleanup", 
+                "status": "error", 
+                "error": str(e)
+            })
+    
+    return result
+
+# Run the server
+if __name__ == "__main__":
+    uvicorn.run("server:app", host="0.0.0.0", port=5000, reload=True)
