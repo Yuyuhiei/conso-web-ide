@@ -472,11 +472,12 @@ def transpile(conso_code):
     transpiler = ConsoTranspiler()
     return transpiler.transpile(conso_code)
 
-def transpile_from_tokens(token_list):
+def transpile_from_tokens(token_list, symbol_table=None):
     """
     Transpile Conso code to C code using a token stream.
     Args:
         token_list (list): List of Token objects or (type, value, line, column) tuples.
+        symbol_table (SymbolTable): The symbol table from semantic analysis.
     Returns:
         str: Transpiled C code
     """
@@ -498,6 +499,8 @@ def transpile_from_tokens(token_list):
             elif len(tok) == 3:
                 return tok[0], tok[0]
         return None, None
+
+    # Use the provided symbol_table from semantic analysis
 
     while i < n:
         token = token_list[i]
@@ -528,6 +531,48 @@ def transpile_from_tokens(token_list):
             i += 1
             continue
 
+        # Variable declarations (nt, dbl, bln, chr, strng)
+        if ttype in transpiler.type_mapping:
+            var_type = transpiler.type_mapping[ttype]
+            j = i + 1
+            # Expect: id = value ;
+            var_name = None
+            init_expr = []
+            # Find variable name
+            if j < n:
+                ttype2, tvalue2 = get_token_type_value(token_list[j])
+                if ttype2 == "id":
+                    var_name = tvalue2
+                    j += 1
+            # Find '='
+            if j < n:
+                ttype3, tvalue3 = get_token_type_value(token_list[j])
+                if ttype3 == "=":
+                    j += 1
+            # Collect initialization expression until ';'
+            while j < n:
+                ttype4, tvalue4 = get_token_type_value(token_list[j])
+                if ttype4 == ";":
+                    break
+                init_expr.append(str(tvalue4))
+                j += 1
+            # Register in symbol table
+            # No need to register variable in symbol_table; use semantic symbol table
+            # Compose declaration
+            decl = f"{var_type} {var_name}"
+            if init_expr:
+                # For string/char, wrap in quotes if not already
+                if ttype == "strng" and not (init_expr[0].startswith('"') and init_expr[0].endswith('"')):
+                    decl += f' = "{init_expr[0]}"'
+                elif ttype == "chr" and not (init_expr[0].startswith("'") and init_expr[0].endswith("'")):
+                    decl += f" = '{init_expr[0]}'"
+                else:
+                    decl += " = " + ' '.join(init_expr)
+            decl += ";"
+            output_lines.append(transpiler._indent(indent_level) + decl)
+            i = j + 1
+            continue
+
         # Print statement
         if ttype == "prnt":
             # Parse prnt ( ... );
@@ -553,39 +598,108 @@ def transpile_from_tokens(token_list):
                 if paren_count > 0:
                     args_tokens.append(token_list[k])
                 k += 1
-            # Build the print statement
-            if args_tokens:
-                first_type, first_value = get_token_type_value(args_tokens[0])
-            else:
-                first_type, first_value = None, None
-            if args_tokens and first_type in ["strnglit", "strng"]:
-                str_val = first_value
-                if len(args_tokens) > 1:
-                    format_str = str_val
-                    arg_exprs = []
-                    curr_expr = []
-                    for t in args_tokens[1:]:
-                        ttype2, tvalue2 = get_token_type_value(t)
-                        if ttype2 == ",":
-                            if curr_expr:
-                                arg_exprs.append(' '.join(str(get_token_type_value(x)[1]) for x in curr_expr))
-                                curr_expr = []
-                        else:
-                            curr_expr.append(t)
-                    if curr_expr:
-                        arg_exprs.append(' '.join(str(get_token_type_value(x)[1]) for x in curr_expr))
-                    if "%" not in format_str:
-                        format_str += " " + " ".join(["%d" for _ in arg_exprs])
-                    if "\\n" not in format_str:
-                        format_str += "\\n"
-                    output_lines.append(transpiler._indent(indent_level) + f'printf("{format_str}", {", ".join(arg_exprs)}); fflush(stdout);')
+
+            # Split arguments by commas
+            arg_groups = []
+            curr_arg = []
+            for t in args_tokens:
+                ttype2, tvalue2 = get_token_type_value(t)
+                if ttype2 == ",":
+                    if curr_arg:
+                        arg_groups.append(curr_arg)
+                        curr_arg = []
                 else:
-                    if "\\n" not in str_val:
-                        str_val += "\\n"
-                    output_lines.append(transpiler._indent(indent_level) + f'printf("{str_val}"); fflush(stdout);')
-            else:
-                expr = ' '.join(str(get_token_type_value(x)[1]) for x in args_tokens)
-                output_lines.append(transpiler._indent(indent_level) + f'printf("%d\\n", {expr}); fflush(stdout);')
+                    curr_arg.append(t)
+            if curr_arg:
+                arg_groups.append(curr_arg)
+
+            # Build format string and argument list
+            format_parts = []
+            arg_exprs = []
+            for arg in arg_groups:
+                # Single token: variable or literal
+                if len(arg) == 1:
+                    atype, avalue = get_token_type_value(arg[0])
+                    # Variable: look up type
+                    if atype == "id" and symbol_table and symbol_table.lookup(avalue):
+                        vtype = symbol_table.lookup(avalue).data_type
+                        if vtype == "strng":
+                            format_parts.append("%s")
+                        elif vtype == "dbl":
+                            format_parts.append("%.2f")
+                        elif vtype == "nt":
+                            format_parts.append("%d")
+                        elif vtype == "chr":
+                            format_parts.append("%c")
+                        elif vtype == "bln":
+                            format_parts.append("%d")
+                        else:
+                            format_parts.append("%s")
+                        arg_exprs.append(avalue)
+                    # String literal
+                    elif atype == "strnglit":
+                        format_parts.append("%s")
+                        arg_exprs.append(f'"{avalue}"')
+                    # Char literal
+                    elif atype == "chrlit":
+                        format_parts.append("%c")
+                        arg_exprs.append(f"'{avalue}'")
+                    # Number literal
+                    elif atype in ["ntlit", "~ntlit"]:
+                        format_parts.append("%d")
+                        arg_exprs.append(avalue)
+                    elif atype in ["dbllit", "~dbllit"]:
+                        format_parts.append("%.2f")
+                        arg_exprs.append(avalue)
+                    # Boolean literal
+                    elif atype == "blnlit":
+                        format_parts.append("%d")
+                        arg_exprs.append("1" if avalue == "tr" else "0")
+                    else:
+                        format_parts.append("%s")
+                        arg_exprs.append(str(avalue))
+                else:
+                    # Expression: try to infer type (if any operand is dbl, treat as double)
+                    expr_str = ' '.join(str(get_token_type_value(x)[1]) for x in arg)
+                    expr_types = set()
+                    for x in arg:
+                        xtype, xvalue = get_token_type_value(x)
+                        print(f"DEBUG: token in expr: xtype={xtype}, xvalue={xvalue}")  # Debug
+                        if xtype == "id":
+                            dtype = None
+                            if symbol_table and symbol_table.lookup(xvalue):
+                                dtype = symbol_table.lookup(xvalue).data_type
+                            else:
+                                # Fallback: assume int for unknown ids (restores original behavior)
+                                dtype = "nt"
+                            expr_types.add(dtype)
+                        elif xtype in ["dbllit", "~dbllit"]:
+                            expr_types.add("dbl")
+                        elif xtype in ["ntlit", "~ntlit"]:
+                            expr_types.add("nt")
+                        elif xtype == "strnglit":
+                            expr_types.add("strng")
+                        elif xtype == "chrlit":
+                            expr_types.add("chr")
+                        elif xtype == "blnlit":
+                            expr_types.add("bln")
+                    # Use original heuristic: string > double > int > char > bool
+                    if "strng" in expr_types:
+                        format_parts.append("%s")
+                    elif "dbl" in expr_types:
+                        format_parts.append("%.2f")
+                    elif "nt" in expr_types:
+                        format_parts.append("%d")
+                    elif "chr" in expr_types:
+                        format_parts.append("%c")
+                    elif "bln" in expr_types:
+                        format_parts.append("%d")
+                    else:
+                        format_parts.append("%s")
+                    print(f"DEBUG: print expr '{expr_str}' inferred types {expr_types}")  # Debug
+                    arg_exprs.append(expr_str)
+            format_str = " ".join(format_parts) + "\\n"
+            output_lines.append(transpiler._indent(indent_level) + f'printf("{format_str}", {", ".join(arg_exprs)}); fflush(stdout);')
             i = k + 1
             if i < n:
                 next_type, _ = get_token_type_value(token_list[i])
@@ -606,8 +720,8 @@ def transpile_from_tokens(token_list):
             i += 1
             continue
 
-        # Variable declarations and other statements
-        if ttype in transpiler.type_mapping or ttype in ["id", "=", "+", "-", "*", "/", "%", "++", "--", "+=", "-=", "*=", "/=", "%=", "==", "!=", "<", "<=", ">", ">=", "tr", "fls", "npt", "cntn", "rtrn"]:
+        # Other statements (assignments, expressions, etc.)
+        if ttype in ["id", "=", "+", "-", "*", "/", "%", "++", "--", "+=", "-=", "*=", "/=", "%=", "==", "!=", "<", "<=", ">", ">=", "tr", "fls", "npt", "cntn", "rtrn"]:
             stmt_tokens = [str(tvalue)]
             j = i + 1
             while j < n:
@@ -616,12 +730,6 @@ def transpile_from_tokens(token_list):
                     break
                 stmt_tokens.append(str(tvalue2))
                 j += 1
-            if ttype in transpiler.type_mapping:
-                stmt_tokens[0] = transpiler.type_mapping[ttype]
-            if ttype == "tr":
-                stmt_tokens[0] = "1"
-            if ttype == "fls":
-                stmt_tokens[0] = "0"
             output_lines.append(transpiler._indent(indent_level) + ' '.join(stmt_tokens) + ";")
             i = j + 1
             continue

@@ -306,7 +306,7 @@ async def run_code(request: CodeRequest):
         try:
             # Import the transpiler here to avoid circular imports
             from transpiler import transpile_from_tokens
-            transpiled_code = transpile_from_tokens(tokens)
+            transpiled_code = transpile_from_tokens(tokens, analyzer.function_scopes.get("mn", analyzer.global_scope))
         except Exception as e:
             import traceback
             print(f"Transpilation error: {str(e)}")
