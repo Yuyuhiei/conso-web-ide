@@ -53,22 +53,50 @@ class SemanticResponse(BaseModel):
 
 def normalize_code(code: str) -> str:
     """
-    Normalize code to handle newlines and indentation in a way that
-    satisfies the lexer's delimiter requirements
+    Normalize code to handle newlines, indentation, and excessive whitespace,
+    making the code robust to arbitrary formatting.
     """
-    # Handle specific case where opening brace is followed by newline and indentation
-    # Replace "{\n    " with "{ "
-    code = re.sub(r'{\s*\n\s+', '{ ', code)
-    
+    # Ensure consistent line endings
+    code = code.replace('\r\n', '\n').replace('\r', '\n')
+
     # Remove spaces between mn and (
     code = re.sub(r'mn\s+\(', 'mn(', code)
-    
+
+    # Remove specific case where opening brace is followed by newline and indentation
+    code = re.sub(r'{\s*\n\s+', '{ ', code)
+
     # Remove extra whitespace at end of lines
     code = re.sub(r'\s+\n', '\n', code)
-    
-    # Ensure consistent line endings
-    code = code.replace('\r\n', '\n')
-    
+
+    # Strip leading whitespace (spaces, tabs, non-breaking spaces) from each line and collapse multiple spaces/tabs
+    lines = code.split('\n')
+    normalized_lines = []
+    for line in lines:
+        # Remove all leading whitespace (spaces, tabs, non-breaking spaces)
+        left_aligned = line.lstrip()
+        # Collapse multiple spaces/tabs inside the line to a single space
+        collapsed = re.sub(r'[ \t]+', ' ', left_aligned)
+        normalized_lines.append(collapsed)
+    code = '\n'.join(normalized_lines)
+
+    # Optionally, join lines where parentheses are open (for multi-line expressions)
+    # This is a simple heuristic: join lines ending with an open parenthesis or operator
+    joined_lines = []
+    buffer = ''
+    paren_depth = 0
+    for line in normalized_lines:
+        paren_depth += line.count('(') - line.count(')')
+        if buffer:
+            buffer += ' ' + line
+        else:
+            buffer = line
+        if paren_depth == 0:
+            joined_lines.append(buffer)
+            buffer = ''
+    if buffer:
+        joined_lines.append(buffer)
+    code = '\n'.join(joined_lines)
+
     return code
 
 # Lexical analysis endpoint
@@ -277,8 +305,8 @@ async def run_code(request: CodeRequest):
         # If all validations pass, transpile the code to C
         try:
             # Import the transpiler here to avoid circular imports
-            from transpiler import transpile
-            transpiled_code = transpile(input_code)
+            from transpiler import transpile_from_tokens
+            transpiled_code = transpile_from_tokens(tokens, analyzer.function_scopes.get("mn", analyzer.global_scope))
         except Exception as e:
             import traceback
             print(f"Transpilation error: {str(e)}")
@@ -350,6 +378,7 @@ async def run_code(request: CodeRequest):
                 }
             
             # Success case
+            print(f"[DEBUG] Returning output to client: {repr(run_result.stdout)}")
             return {
                 "success": True,
                 "phase": "execution",

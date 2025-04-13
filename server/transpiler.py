@@ -66,114 +66,117 @@ class ConsoTranspiler:
                 continue
             
             # Handle main function
-            if line.startswith('mn('):
+            if line.lstrip().startswith('mn('):
                 in_function = True
                 processed_line = "int main(int argc, char *argv[]) {"
                 indent_level = 1
-            
+
             # Handle end statement (return from main)
-            elif line.startswith('end;'):
+            elif line.lstrip().startswith('end;'):
                 processed_line = self._indent(indent_level) + "return 0;"
                 indent_level = 0
                 in_function = False
-            
+
             # Handle variable declarations
-            elif any(line.startswith(t + " ") for t in self.type_mapping):
+            elif any(line.lstrip().startswith(t + " ") for t in self.type_mapping):
                 processed_line = self._process_declaration(line)
-            
+
             # Handle print statements
-            elif line.startswith('prnt('):
+            elif line.lstrip().startswith('prnt('):
                 processed_line = self._process_print(line)
-            
+
             # Handle input statements
-            elif line.startswith('npt(') or 'npt(' in line:
+            elif line.lstrip().startswith('npt(') or 'npt(' in line:
                 processed_line = self._process_input(line)
-            
+
             # Handle if statements
-            elif line.startswith('f ('):
+            elif line.lstrip().startswith('f ('):
                 processed_line = self._process_if_statement(line)
                 indent_level += 1
-            
+
             # Handle else if statements
-            elif line.startswith('lsf ('):
+            elif line.lstrip().startswith('lsf ('):
                 indent_level -= 1  # Reduce indent for else if
                 processed_line = self._process_else_if_statement(line)
                 indent_level += 1  # Increase indent after else if
-            
+
             # Handle else statements
-            elif line.startswith('ls {'):
+            elif line.lstrip().startswith('ls {'):
                 indent_level -= 1  # Reduce indent for else
                 processed_line = self._indent(indent_level) + "else {"
                 indent_level += 1  # Increase indent after else
-            
+
             # Handle while loops
-            elif line.startswith('whl ('):
+            elif line.lstrip().startswith('whl ('):
                 processed_line = self._process_while_loop(line)
                 indent_level += 1
-            
+
             # Handle for loops
-            elif line.startswith('fr ('):
+            elif line.lstrip().startswith('fr ('):
                 processed_line = self._process_for_loop(line)
                 indent_level += 1
-            
+
             # Handle do-while loops
-            elif line.startswith('d {'):
+            elif line.lstrip().startswith('d {'):
                 processed_line = self._indent(indent_level) + "do {"
                 indent_level += 1
-            
+
             # Handle the "while" part of do-while
-            elif line.startswith('whl (') and i > 0 and lines[i-1].strip() == '}':
+            elif line.lstrip().startswith('whl (') and i > 0 and lines[i-1].strip() == '}':
                 # This is part of a do-while loop
                 indent_level -= 1  # Reduce indent for the while condition
                 processed_line = self._process_do_while_condition(line)
-            
+
             # Handle switch statements
-            elif line.startswith('swtch ('):
+            elif line.lstrip().startswith('swtch ('):
                 processed_line = self._process_switch(line)
                 indent_level += 1
-            
+
             # Handle case statements
-            elif line.startswith('cs '):
+            elif line.lstrip().startswith('cs '):
                 processed_line = self._process_case(line)
-            
+
             # Handle default case
-            elif line.startswith('dflt:'):
+            elif line.lstrip().startswith('dflt:'):
                 processed_line = self._indent(indent_level) + "default:"
-            
+
             # Handle functions
-            elif line.startswith('fnctn '):
+            elif line.lstrip().startswith('fnctn '):
                 processed_line = self._process_function(line)
                 in_function = True
                 indent_level = 1
-            
+
             # Handle return statements
-            elif line.startswith('rtrn '):
+            elif line.lstrip().startswith('rtrn '):
                 processed_line = self._process_return(line)
-            
+
             # Handle struct declarations
-            elif line.startswith('strct '):
+            elif line.lstrip().startswith('strct '):
                 processed_line, struct_lines = self._process_struct(lines, i)
                 i += struct_lines  # Skip the processed struct lines
-            
+
             # Handle closing braces - decrease indent level
-            elif line == '}':
+            elif line.strip() == '}':
                 indent_level -= 1
                 processed_line = self._indent(indent_level) + "}"
                 if indent_level == 0:
                     in_function = False
-            
+
             # Handle other statements (assignments, expressions, etc.)
             else:
                 processed_line = self._process_other_statement(line)
-            
+
+            # Debug: print the original and processed line
+            print(f"Transpiler: original='{line}' processed='{processed_line}'")
+
             # Add proper indentation to the processed line
             if processed_line and not processed_line.startswith(' ') and not processed_line.startswith('\t'):
                 processed_line = self._indent(indent_level) + processed_line
-            
+
             # Add the processed line to our result
             if processed_line:
                 processed_lines.append(processed_line)
-            
+
             i += 1
         
         # Join all processed lines and return the C code
@@ -187,11 +190,12 @@ class ConsoTranspiler:
 
     def _generate_headers(self):
         """Generate the necessary C headers"""
-        return """#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-"""
+        return (
+            "#include <stdio.h>\n"
+            "#include <stdlib.h>\n"
+            "#include <string.h>\n"
+            "\n"
+        )
 
     def _generate_helper_functions(self):
         """Generate helper functions for Conso-specific operations"""
@@ -247,49 +251,44 @@ char* conso_concat(const char* str1, const char* str2) {
         
         return line  # Type not found, return unchanged
 
-    # Add this function to your ConsoTranspiler class 
     def _process_print(self, line):
         """Process a print statement with a more robust approach"""
-        # Print the input for debugging
-        print(f"Processing print line: '{line}'")
-        
-        # Handle print statements like "prnt("Hello");" or "prnt(5 + 5);"
-        if not line.endswith(';'):
-            line += ';'  # Add semicolon if missing
-        
+        # Remove trailing semicolon if present for parsing
+        if line.endswith(';'):
+            line = line[:-1]
         # Extract the content inside the parentheses
-        content = line[line.find('(')+1:line.rfind(')')]
-        print(f"Print content: '{content}'")
-        
-        # Case 1: String literal - prnt("Hello");
+        content = line[line.find('(')+1:line.rfind(')')].strip()
+
+        # Case 1: String literal only - prnt("Hello");
         if content.startswith('"') and content.endswith('"'):
-            # Make sure the string includes a newline
-            string_content = content[1:-1]  # Remove the quotes
+            string_content = content[1:-1]
             if "\\n" not in string_content:
                 string_content += "\\n"
-            result = f"printf(\"{string_content}\");"
-            print(f"Generated string print: '{result}'")
-            return result
-        
-        # Case 2: Expression with format string - prnt("Value: %d", x);
+            return f'printf("{string_content}"); fflush(stdout);'
+
+        # Case 2: String + expression(s) - prnt("The answer is: ", expr);
         elif content.startswith('"') and ',' in content:
-            parts = content.split(',', 1)
-            format_str = parts[0][1:-1]  # Remove quotes
-            args = parts[1].strip()
-            
-            # Add newline if not present
-            if "\\n" not in format_str:
-                format_str += "\\n"
-            
-            result = f"printf(\"{format_str}\", {args});"
-            print(f"Generated format print: '{result}'")
-            return result
-        
+            # Split on the first comma after the string
+            first_quote_end = content.find('"', 1)
+            if first_quote_end != -1:
+                format_str = content[1:first_quote_end]
+                args = content[first_quote_end+2:].strip()  # skip ","
+                # If the format string does not contain any %, append %d or %f for each argument
+                if "%" not in format_str:
+                    # Support multiple arguments (comma-separated)
+                    arg_list = [a.strip() for a in args.split(",")]
+                    # Default: use %d for each argument
+                    format_str += " " + " ".join(["%d" for _ in arg_list])
+                if "\\n" not in format_str:
+                    format_str += "\\n"
+                return f'printf("{format_str}", {args}); fflush(stdout);'
+            else:
+                # Fallback: treat as expression
+                return f'printf("%d\\n", {content}); fflush(stdout);'
+
         # Case 3: Expression or variable - prnt(5 + 5); or prnt(x);
         else:
-            result = f"printf(\"%d\\n\", {content});"
-            print(f"Generated expression print: '{result}'")
-            return result
+            return f'printf("%d\\n", {content}); fflush(stdout);'
 
     def _process_input(self, line):
         """Process an input statement"""
@@ -473,13 +472,288 @@ def transpile(conso_code):
     transpiler = ConsoTranspiler()
     return transpiler.transpile(conso_code)
 
+def transpile_from_tokens(token_list, symbol_table=None):
+    """
+    Transpile Conso code to C code using a token stream.
+    Args:
+        token_list (list): List of Token objects or (type, value, line, column) tuples.
+        symbol_table (SymbolTable): The symbol table from semantic analysis.
+    Returns:
+        str: Transpiled C code
+    """
+    transpiler = ConsoTranspiler()
+    c_code = transpiler._generate_headers()
+    c_code += transpiler._generate_helper_functions()
+
+    # State
+    output_lines = []
+    indent_level = 0
+    i = 0
+    n = len(token_list)
+    def get_token_type_value(tok):
+        if hasattr(tok, 'type') and hasattr(tok, 'value'):
+            return tok.type, tok.value
+        elif isinstance(tok, tuple):
+            if len(tok) == 4:
+                return tok[0], tok[1]
+            elif len(tok) == 3:
+                return tok[0], tok[0]
+        return None, None
+
+    # Use the provided symbol_table from semantic analysis
+
+    while i < n:
+        token = token_list[i]
+        ttype, tvalue = get_token_type_value(token)
+
+        # Skip EOF
+        if ttype == "EOF":
+            i += 1
+            continue
+
+        # Main function
+        if ttype == "mn":
+            output_lines.append("int main(int argc, char *argv[]) {")
+            indent_level = 1
+            # Skip possible '(' ... ')' and '{'
+            while i+1 < n:
+                next_type, _ = get_token_type_value(token_list[i+1])
+                if next_type in ["(", ")", "{"]:
+                    i += 1
+                else:
+                    break
+            i += 1
+            continue
+
+        # End statement
+        if ttype == "end":
+            output_lines.append(transpiler._indent(indent_level) + "return 0;")
+            i += 1
+            continue
+
+        # Variable declarations (nt, dbl, bln, chr, strng)
+        if ttype in transpiler.type_mapping:
+            var_type = transpiler.type_mapping[ttype]
+            j = i + 1
+            # Expect: id = value ;
+            var_name = None
+            init_expr = []
+            # Find variable name
+            if j < n:
+                ttype2, tvalue2 = get_token_type_value(token_list[j])
+                if ttype2 == "id":
+                    var_name = tvalue2
+                    j += 1
+            # Find '='
+            if j < n:
+                ttype3, tvalue3 = get_token_type_value(token_list[j])
+                if ttype3 == "=":
+                    j += 1
+            # Collect initialization expression until ';'
+            while j < n:
+                ttype4, tvalue4 = get_token_type_value(token_list[j])
+                if ttype4 == ";":
+                    break
+                init_expr.append(str(tvalue4))
+                j += 1
+            # Register in symbol table
+            # No need to register variable in symbol_table; use semantic symbol table
+            # Compose declaration
+            decl = f"{var_type} {var_name}"
+            if init_expr:
+                # For string/char, wrap in quotes if not already
+                if ttype == "strng" and not (init_expr[0].startswith('"') and init_expr[0].endswith('"')):
+                    decl += f' = "{init_expr[0]}"'
+                elif ttype == "chr" and not (init_expr[0].startswith("'") and init_expr[0].endswith("'")):
+                    decl += f" = '{init_expr[0]}'"
+                else:
+                    decl += " = " + ' '.join(init_expr)
+            decl += ";"
+            output_lines.append(transpiler._indent(indent_level) + decl)
+            i = j + 1
+            continue
+
+        # Print statement
+        if ttype == "prnt":
+            # Parse prnt ( ... );
+            # Find the opening '('
+            j = i + 1
+            while j < n:
+                next_type, _ = get_token_type_value(token_list[j])
+                if next_type == "(":
+                    break
+                j += 1
+            # Find the closing ')'
+            k = j + 1
+            paren_count = 1
+            args_tokens = []
+            while k < n and paren_count > 0:
+                curr_type, _ = get_token_type_value(token_list[k])
+                if curr_type == "(":
+                    paren_count += 1
+                elif curr_type == ")":
+                    paren_count -= 1
+                    if paren_count == 0:
+                        break
+                if paren_count > 0:
+                    args_tokens.append(token_list[k])
+                k += 1
+
+            # Split arguments by commas
+            arg_groups = []
+            curr_arg = []
+            for t in args_tokens:
+                ttype2, tvalue2 = get_token_type_value(t)
+                if ttype2 == ",":
+                    if curr_arg:
+                        arg_groups.append(curr_arg)
+                        curr_arg = []
+                else:
+                    curr_arg.append(t)
+            if curr_arg:
+                arg_groups.append(curr_arg)
+
+            # Build format string and argument list
+            format_parts = []
+            arg_exprs = []
+            for arg in arg_groups:
+                # Single token: variable or literal
+                if len(arg) == 1:
+                    atype, avalue = get_token_type_value(arg[0])
+                    # Variable: look up type
+                    if atype == "id" and symbol_table and symbol_table.lookup(avalue):
+                        vtype = symbol_table.lookup(avalue).data_type
+                        if vtype == "strng":
+                            format_parts.append("%s")
+                        elif vtype == "dbl":
+                            format_parts.append("%.2f")
+                        elif vtype == "nt":
+                            format_parts.append("%d")
+                        elif vtype == "chr":
+                            format_parts.append("%c")
+                        elif vtype == "bln":
+                            format_parts.append("%d")
+                        else:
+                            format_parts.append("%s")
+                        arg_exprs.append(avalue)
+                    # String literal
+                    elif atype == "strnglit":
+                        format_parts.append("%s")
+                        arg_exprs.append(f'"{avalue}"')
+                    # Char literal
+                    elif atype == "chrlit":
+                        format_parts.append("%c")
+                        arg_exprs.append(f"'{avalue}'")
+                    # Number literal
+                    elif atype in ["ntlit", "~ntlit"]:
+                        format_parts.append("%d")
+                        arg_exprs.append(avalue)
+                    elif atype in ["dbllit", "~dbllit"]:
+                        format_parts.append("%.2f")
+                        arg_exprs.append(avalue)
+                    # Boolean literal
+                    elif atype == "blnlit":
+                        format_parts.append("%d")
+                        arg_exprs.append("1" if avalue == "tr" else "0")
+                    else:
+                        format_parts.append("%s")
+                        arg_exprs.append(str(avalue))
+                else:
+                    # Expression: try to infer type (if any operand is dbl, treat as double)
+                    expr_str = ' '.join(str(get_token_type_value(x)[1]) for x in arg)
+                    expr_types = set()
+                    for x in arg:
+                        xtype, xvalue = get_token_type_value(x)
+                        print(f"DEBUG: token in expr: xtype={xtype}, xvalue={xvalue}")  # Debug
+                        if xtype == "id":
+                            dtype = None
+                            if symbol_table and symbol_table.lookup(xvalue):
+                                dtype = symbol_table.lookup(xvalue).data_type
+                            else:
+                                # Fallback: assume int for unknown ids (restores original behavior)
+                                dtype = "nt"
+                            expr_types.add(dtype)
+                        elif xtype in ["dbllit", "~dbllit"]:
+                            expr_types.add("dbl")
+                        elif xtype in ["ntlit", "~ntlit"]:
+                            expr_types.add("nt")
+                        elif xtype == "strnglit":
+                            expr_types.add("strng")
+                        elif xtype == "chrlit":
+                            expr_types.add("chr")
+                        elif xtype == "blnlit":
+                            expr_types.add("bln")
+                    # Use original heuristic: string > double > int > char > bool
+                    if "strng" in expr_types:
+                        format_parts.append("%s")
+                    elif "dbl" in expr_types:
+                        format_parts.append("%.2f")
+                    elif "nt" in expr_types:
+                        format_parts.append("%d")
+                    elif "chr" in expr_types:
+                        format_parts.append("%c")
+                    elif "bln" in expr_types:
+                        format_parts.append("%d")
+                    else:
+                        format_parts.append("%s")
+                    print(f"DEBUG: print expr '{expr_str}' inferred types {expr_types}")  # Debug
+                    arg_exprs.append(expr_str)
+            format_str = " ".join(format_parts) + "\\n"
+            output_lines.append(transpiler._indent(indent_level) + f'printf("{format_str}", {", ".join(arg_exprs)}); fflush(stdout);')
+            i = k + 1
+            if i < n:
+                next_type, _ = get_token_type_value(token_list[i])
+                if next_type == ";":
+                    i += 1
+            continue
+
+        # Opening brace
+        if ttype == "{":
+            indent_level += 1
+            i += 1
+            continue
+
+        # Closing brace
+        if ttype == "}":
+            indent_level -= 1
+            output_lines.append(transpiler._indent(indent_level) + "}")
+            i += 1
+            continue
+
+        # Other statements (assignments, expressions, etc.)
+        if ttype in ["id", "=", "+", "-", "*", "/", "%", "++", "--", "+=", "-=", "*=", "/=", "%=", "==", "!=", "<", "<=", ">", ">=", "tr", "fls", "npt", "cntn", "rtrn"]:
+            stmt_tokens = [str(tvalue)]
+            j = i + 1
+            while j < n:
+                ttype2, tvalue2 = get_token_type_value(token_list[j])
+                if ttype2 == ";":
+                    break
+                stmt_tokens.append(str(tvalue2))
+                j += 1
+            output_lines.append(transpiler._indent(indent_level) + ' '.join(stmt_tokens) + ";")
+            i = j + 1
+            continue
+
+        if ttype == ";":
+            i += 1
+            continue
+
+        if ttype == ",":
+            i += 1
+            continue
+
+        i += 1
+
+    c_code += '\n'.join(output_lines)
+    return c_code
+
 # Example usage if script is run directly
 if __name__ == "__main__":
     # Example Conso code
     conso_code = """
     mn() {
         nt x = 5;
-        prnt("Value of x is: ", x);
+        prnt("Value of x is: %d", x);
         end;
     }
     """

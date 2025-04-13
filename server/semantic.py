@@ -100,6 +100,7 @@ class SemanticAnalyzer:
         self.token_stream = []
         self.current_scope = None
         self.global_scope = SymbolTable(scope_name="global")
+        self.function_scopes = {}  # Map function name to its SymbolTable
         
         # Define valid data types
         self.data_types = {'nt', 'dbl', 'bln', 'chr', 'strng'}
@@ -115,10 +116,10 @@ class SemanticAnalyzer:
         
         # Define built-in functions
         self.built_in_functions = {'prnt', 'scan', 'len', 'npt'}
-
+    
         # Add struct-related keywords
         self.struct_keywords = {'strct', 'dfstrct'}
-
+    
         # Add these tracking flags
         self.in_loop = False
         self.in_switch = False
@@ -1169,6 +1170,8 @@ class SemanticAnalyzer:
         self.in_switch = old_in_switch
 
         # Restore original scope
+        # Store the main function's scope for later use (e.g., by the transpiler)
+        self.function_scopes["mn"] = main_scope
         self.current_scope = old_scope
 
     def analyze(self, tokens):
