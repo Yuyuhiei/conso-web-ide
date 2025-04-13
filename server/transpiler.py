@@ -66,114 +66,117 @@ class ConsoTranspiler:
                 continue
             
             # Handle main function
-            if line.startswith('mn('):
+            if line.lstrip().startswith('mn('):
                 in_function = True
                 processed_line = "int main(int argc, char *argv[]) {"
                 indent_level = 1
-            
+
             # Handle end statement (return from main)
-            elif line.startswith('end;'):
+            elif line.lstrip().startswith('end;'):
                 processed_line = self._indent(indent_level) + "return 0;"
                 indent_level = 0
                 in_function = False
-            
+
             # Handle variable declarations
-            elif any(line.startswith(t + " ") for t in self.type_mapping):
+            elif any(line.lstrip().startswith(t + " ") for t in self.type_mapping):
                 processed_line = self._process_declaration(line)
-            
+
             # Handle print statements
-            elif line.startswith('prnt('):
+            elif line.lstrip().startswith('prnt('):
                 processed_line = self._process_print(line)
-            
+
             # Handle input statements
-            elif line.startswith('npt(') or 'npt(' in line:
+            elif line.lstrip().startswith('npt(') or 'npt(' in line:
                 processed_line = self._process_input(line)
-            
+
             # Handle if statements
-            elif line.startswith('f ('):
+            elif line.lstrip().startswith('f ('):
                 processed_line = self._process_if_statement(line)
                 indent_level += 1
-            
+
             # Handle else if statements
-            elif line.startswith('lsf ('):
+            elif line.lstrip().startswith('lsf ('):
                 indent_level -= 1  # Reduce indent for else if
                 processed_line = self._process_else_if_statement(line)
                 indent_level += 1  # Increase indent after else if
-            
+
             # Handle else statements
-            elif line.startswith('ls {'):
+            elif line.lstrip().startswith('ls {'):
                 indent_level -= 1  # Reduce indent for else
                 processed_line = self._indent(indent_level) + "else {"
                 indent_level += 1  # Increase indent after else
-            
+
             # Handle while loops
-            elif line.startswith('whl ('):
+            elif line.lstrip().startswith('whl ('):
                 processed_line = self._process_while_loop(line)
                 indent_level += 1
-            
+
             # Handle for loops
-            elif line.startswith('fr ('):
+            elif line.lstrip().startswith('fr ('):
                 processed_line = self._process_for_loop(line)
                 indent_level += 1
-            
+
             # Handle do-while loops
-            elif line.startswith('d {'):
+            elif line.lstrip().startswith('d {'):
                 processed_line = self._indent(indent_level) + "do {"
                 indent_level += 1
-            
+
             # Handle the "while" part of do-while
-            elif line.startswith('whl (') and i > 0 and lines[i-1].strip() == '}':
+            elif line.lstrip().startswith('whl (') and i > 0 and lines[i-1].strip() == '}':
                 # This is part of a do-while loop
                 indent_level -= 1  # Reduce indent for the while condition
                 processed_line = self._process_do_while_condition(line)
-            
+
             # Handle switch statements
-            elif line.startswith('swtch ('):
+            elif line.lstrip().startswith('swtch ('):
                 processed_line = self._process_switch(line)
                 indent_level += 1
-            
+
             # Handle case statements
-            elif line.startswith('cs '):
+            elif line.lstrip().startswith('cs '):
                 processed_line = self._process_case(line)
-            
+
             # Handle default case
-            elif line.startswith('dflt:'):
+            elif line.lstrip().startswith('dflt:'):
                 processed_line = self._indent(indent_level) + "default:"
-            
+
             # Handle functions
-            elif line.startswith('fnctn '):
+            elif line.lstrip().startswith('fnctn '):
                 processed_line = self._process_function(line)
                 in_function = True
                 indent_level = 1
-            
+
             # Handle return statements
-            elif line.startswith('rtrn '):
+            elif line.lstrip().startswith('rtrn '):
                 processed_line = self._process_return(line)
-            
+
             # Handle struct declarations
-            elif line.startswith('strct '):
+            elif line.lstrip().startswith('strct '):
                 processed_line, struct_lines = self._process_struct(lines, i)
                 i += struct_lines  # Skip the processed struct lines
-            
+
             # Handle closing braces - decrease indent level
-            elif line == '}':
+            elif line.strip() == '}':
                 indent_level -= 1
                 processed_line = self._indent(indent_level) + "}"
                 if indent_level == 0:
                     in_function = False
-            
+
             # Handle other statements (assignments, expressions, etc.)
             else:
                 processed_line = self._process_other_statement(line)
-            
+
+            # Debug: print the original and processed line
+            print(f"Transpiler: original='{line}' processed='{processed_line}'")
+
             # Add proper indentation to the processed line
             if processed_line and not processed_line.startswith(' ') and not processed_line.startswith('\t'):
                 processed_line = self._indent(indent_level) + processed_line
-            
+
             # Add the processed line to our result
             if processed_line:
                 processed_lines.append(processed_line)
-            
+
             i += 1
         
         # Join all processed lines and return the C code
@@ -187,11 +190,12 @@ class ConsoTranspiler:
 
     def _generate_headers(self):
         """Generate the necessary C headers"""
-        return """#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-"""
+        return (
+            "#include <stdio.h>\n"
+            "#include <stdlib.h>\n"
+            "#include <string.h>\n"
+            "\n"
+        )
 
     def _generate_helper_functions(self):
         """Generate helper functions for Conso-specific operations"""
@@ -247,49 +251,44 @@ char* conso_concat(const char* str1, const char* str2) {
         
         return line  # Type not found, return unchanged
 
-    # Add this function to your ConsoTranspiler class 
     def _process_print(self, line):
         """Process a print statement with a more robust approach"""
-        # Print the input for debugging
-        print(f"Processing print line: '{line}'")
-        
-        # Handle print statements like "prnt("Hello");" or "prnt(5 + 5);"
-        if not line.endswith(';'):
-            line += ';'  # Add semicolon if missing
-        
+        # Remove trailing semicolon if present for parsing
+        if line.endswith(';'):
+            line = line[:-1]
         # Extract the content inside the parentheses
-        content = line[line.find('(')+1:line.rfind(')')]
-        print(f"Print content: '{content}'")
-        
-        # Case 1: String literal - prnt("Hello");
+        content = line[line.find('(')+1:line.rfind(')')].strip()
+
+        # Case 1: String literal only - prnt("Hello");
         if content.startswith('"') and content.endswith('"'):
-            # Make sure the string includes a newline
-            string_content = content[1:-1]  # Remove the quotes
+            string_content = content[1:-1]
             if "\\n" not in string_content:
                 string_content += "\\n"
-            result = f"printf(\"{string_content}\");"
-            print(f"Generated string print: '{result}'")
-            return result
-        
-        # Case 2: Expression with format string - prnt("Value: %d", x);
+            return f'printf("{string_content}"); fflush(stdout);'
+
+        # Case 2: String + expression(s) - prnt("The answer is: ", expr);
         elif content.startswith('"') and ',' in content:
-            parts = content.split(',', 1)
-            format_str = parts[0][1:-1]  # Remove quotes
-            args = parts[1].strip()
-            
-            # Add newline if not present
-            if "\\n" not in format_str:
-                format_str += "\\n"
-            
-            result = f"printf(\"{format_str}\", {args});"
-            print(f"Generated format print: '{result}'")
-            return result
-        
+            # Split on the first comma after the string
+            first_quote_end = content.find('"', 1)
+            if first_quote_end != -1:
+                format_str = content[1:first_quote_end]
+                args = content[first_quote_end+2:].strip()  # skip ","
+                # If the format string does not contain any %, append %d or %f for each argument
+                if "%" not in format_str:
+                    # Support multiple arguments (comma-separated)
+                    arg_list = [a.strip() for a in args.split(",")]
+                    # Default: use %d for each argument
+                    format_str += " " + " ".join(["%d" for _ in arg_list])
+                if "\\n" not in format_str:
+                    format_str += "\\n"
+                return f'printf("{format_str}", {args}); fflush(stdout);'
+            else:
+                # Fallback: treat as expression
+                return f'printf("%d\\n", {content}); fflush(stdout);'
+
         # Case 3: Expression or variable - prnt(5 + 5); or prnt(x);
         else:
-            result = f"printf(\"%d\\n\", {content});"
-            print(f"Generated expression print: '{result}'")
-            return result
+            return f'printf("%d\\n", {content}); fflush(stdout);'
 
     def _process_input(self, line):
         """Process an input statement"""
@@ -479,7 +478,7 @@ if __name__ == "__main__":
     conso_code = """
     mn() {
         nt x = 5;
-        prnt("Value of x is: ", x);
+        prnt("Value of x is: %d", x);
         end;
     }
     """

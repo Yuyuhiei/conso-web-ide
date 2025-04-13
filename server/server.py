@@ -350,6 +350,7 @@ async def run_code(request: CodeRequest):
                 }
             
             # Success case
+            print(f"[DEBUG] Returning output to client: {repr(run_result.stdout)}")
             return {
                 "success": True,
                 "phase": "execution",
