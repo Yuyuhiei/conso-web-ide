@@ -472,6 +472,173 @@ def transpile(conso_code):
     transpiler = ConsoTranspiler()
     return transpiler.transpile(conso_code)
 
+def transpile_from_tokens(token_list):
+    """
+    Transpile Conso code to C code using a token stream.
+    Args:
+        token_list (list): List of Token objects or (type, value, line, column) tuples.
+    Returns:
+        str: Transpiled C code
+    """
+    transpiler = ConsoTranspiler()
+    c_code = transpiler._generate_headers()
+    c_code += transpiler._generate_helper_functions()
+
+    # State
+    output_lines = []
+    indent_level = 0
+    i = 0
+    n = len(token_list)
+    def get_token_type_value(tok):
+        if hasattr(tok, 'type') and hasattr(tok, 'value'):
+            return tok.type, tok.value
+        elif isinstance(tok, tuple):
+            if len(tok) == 4:
+                return tok[0], tok[1]
+            elif len(tok) == 3:
+                return tok[0], tok[0]
+        return None, None
+
+    while i < n:
+        token = token_list[i]
+        ttype, tvalue = get_token_type_value(token)
+
+        # Skip EOF
+        if ttype == "EOF":
+            i += 1
+            continue
+
+        # Main function
+        if ttype == "mn":
+            output_lines.append("int main(int argc, char *argv[]) {")
+            indent_level = 1
+            # Skip possible '(' ... ')' and '{'
+            while i+1 < n:
+                next_type, _ = get_token_type_value(token_list[i+1])
+                if next_type in ["(", ")", "{"]:
+                    i += 1
+                else:
+                    break
+            i += 1
+            continue
+
+        # End statement
+        if ttype == "end":
+            output_lines.append(transpiler._indent(indent_level) + "return 0;")
+            i += 1
+            continue
+
+        # Print statement
+        if ttype == "prnt":
+            # Parse prnt ( ... );
+            # Find the opening '('
+            j = i + 1
+            while j < n:
+                next_type, _ = get_token_type_value(token_list[j])
+                if next_type == "(":
+                    break
+                j += 1
+            # Find the closing ')'
+            k = j + 1
+            paren_count = 1
+            args_tokens = []
+            while k < n and paren_count > 0:
+                curr_type, _ = get_token_type_value(token_list[k])
+                if curr_type == "(":
+                    paren_count += 1
+                elif curr_type == ")":
+                    paren_count -= 1
+                    if paren_count == 0:
+                        break
+                if paren_count > 0:
+                    args_tokens.append(token_list[k])
+                k += 1
+            # Build the print statement
+            if args_tokens:
+                first_type, first_value = get_token_type_value(args_tokens[0])
+            else:
+                first_type, first_value = None, None
+            if args_tokens and first_type in ["strnglit", "strng"]:
+                str_val = first_value
+                if len(args_tokens) > 1:
+                    format_str = str_val
+                    arg_exprs = []
+                    curr_expr = []
+                    for t in args_tokens[1:]:
+                        ttype2, tvalue2 = get_token_type_value(t)
+                        if ttype2 == ",":
+                            if curr_expr:
+                                arg_exprs.append(' '.join(str(get_token_type_value(x)[1]) for x in curr_expr))
+                                curr_expr = []
+                        else:
+                            curr_expr.append(t)
+                    if curr_expr:
+                        arg_exprs.append(' '.join(str(get_token_type_value(x)[1]) for x in curr_expr))
+                    if "%" not in format_str:
+                        format_str += " " + " ".join(["%d" for _ in arg_exprs])
+                    if "\\n" not in format_str:
+                        format_str += "\\n"
+                    output_lines.append(transpiler._indent(indent_level) + f'printf("{format_str}", {", ".join(arg_exprs)}); fflush(stdout);')
+                else:
+                    if "\\n" not in str_val:
+                        str_val += "\\n"
+                    output_lines.append(transpiler._indent(indent_level) + f'printf("{str_val}"); fflush(stdout);')
+            else:
+                expr = ' '.join(str(get_token_type_value(x)[1]) for x in args_tokens)
+                output_lines.append(transpiler._indent(indent_level) + f'printf("%d\\n", {expr}); fflush(stdout);')
+            i = k + 1
+            if i < n:
+                next_type, _ = get_token_type_value(token_list[i])
+                if next_type == ";":
+                    i += 1
+            continue
+
+        # Opening brace
+        if ttype == "{":
+            indent_level += 1
+            i += 1
+            continue
+
+        # Closing brace
+        if ttype == "}":
+            indent_level -= 1
+            output_lines.append(transpiler._indent(indent_level) + "}")
+            i += 1
+            continue
+
+        # Variable declarations and other statements
+        if ttype in transpiler.type_mapping or ttype in ["id", "=", "+", "-", "*", "/", "%", "++", "--", "+=", "-=", "*=", "/=", "%=", "==", "!=", "<", "<=", ">", ">=", "tr", "fls", "npt", "cntn", "rtrn"]:
+            stmt_tokens = [str(tvalue)]
+            j = i + 1
+            while j < n:
+                ttype2, tvalue2 = get_token_type_value(token_list[j])
+                if ttype2 == ";":
+                    break
+                stmt_tokens.append(str(tvalue2))
+                j += 1
+            if ttype in transpiler.type_mapping:
+                stmt_tokens[0] = transpiler.type_mapping[ttype]
+            if ttype == "tr":
+                stmt_tokens[0] = "1"
+            if ttype == "fls":
+                stmt_tokens[0] = "0"
+            output_lines.append(transpiler._indent(indent_level) + ' '.join(stmt_tokens) + ";")
+            i = j + 1
+            continue
+
+        if ttype == ";":
+            i += 1
+            continue
+
+        if ttype == ",":
+            i += 1
+            continue
+
+        i += 1
+
+    c_code += '\n'.join(output_lines)
+    return c_code
+
 # Example usage if script is run directly
 if __name__ == "__main__":
     # Example Conso code
