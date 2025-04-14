@@ -764,59 +764,6 @@ def transpile_from_tokens(token_list, symbol_table=None):
         expr = re.sub(r'(?<![\'"\w])([a-zA-Z])(?![\'"\w])', r"'\1'", expr)
         return expr
 
-    def infer_expr_type(tokens, var_name_prefix=None):
-        """Infer the type of an expression based on tokens and optionally a variable name prefix."""
-        expr_types = set()
-        for xtype, xvalue in tokens:
-            if xtype == "id":
-                # Check if we have type info from symbol table
-                if symbol_table and symbol_table.lookup(xvalue):
-                    dtype = symbol_table.lookup(xvalue).data_type
-                    expr_types.add(dtype)
-                # Infer type from variable name prefix
-                elif var_name_prefix:
-                    if xvalue.startswith("num"):
-                        expr_types.add("nt")
-                    elif xvalue.startswith("frac"):
-                        expr_types.add("dbl")
-                    elif xvalue.startswith("flag"):
-                        expr_types.add("bln")
-                    elif xvalue.startswith("letter") or xvalue.startswith("newLetter"):
-                        expr_types.add("chr")
-                    elif xvalue.startswith("name"):
-                        expr_types.add("strng")
-                else:
-                    # Fallback: assume int
-                    expr_types.add("nt")
-            elif xtype in ["dbllit", "~dbllit"]:
-                expr_types.add("dbl")
-            elif xtype in ["ntlit", "~ntlit"]:
-                expr_types.add("nt")
-            elif xtype == "strnglit":
-                expr_types.add("strng")
-            elif xtype == "chrlit":
-                expr_types.add("chr")
-            elif xtype == "blnlit":
-                expr_types.add("bln")
-        
-        # If we couldn't infer any types, default to int
-        if not expr_types:
-            return "nt"
-        
-        # Prioritize types: strng > dbl > nt > chr > bln
-        if "strng" in expr_types:
-            return "strng"
-        elif "dbl" in expr_types:
-            return "dbl"
-        elif "nt" in expr_types:
-            return "nt"
-        elif "chr" in expr_types:
-            return "chr"
-        elif "bln" in expr_types:
-            return "bln"
-        else:
-            return "nt"  # Default
-
     # Use the provided symbol_table from semantic analysis
 
     while i < n:
@@ -1113,14 +1060,49 @@ def transpile_from_tokens(token_list, symbol_table=None):
                     expr_str = fix_string_literals(expr_str)
                     expr_str = fix_char_literals(expr_str)
                     
-                    # Determine expression type for proper comparison handling
-                    expr_type = infer_expr_type(arg, var_name_prefix=True)
+                    # Determine expression types for format
+                    expr_types = set()
+                    for tok_type, tok_value in arg:
+                        if tok_type == "id":
+                            dtype = None
+                            if symbol_table and symbol_table.lookup(tok_value):
+                                dtype = symbol_table.lookup(tok_value).data_type
+                            else:
+                                # Try to infer from variable name
+                                if tok_value.startswith("frac"):
+                                    dtype = "dbl"
+                                elif tok_value.startswith("num"):
+                                    dtype = "nt"
+                                elif tok_value.startswith("flag"):
+                                    dtype = "bln"
+                                elif tok_value.startswith("letter") or tok_value.startswith("newLetter"):
+                                    dtype = "chr"
+                                elif tok_value.startswith("name"):
+                                    dtype = "strng"
+                                else:
+                                    # Fallback: assume int
+                                    dtype = "nt"
+                            expr_types.add(dtype)
+                        elif tok_type in ["dbllit", "~dbllit"]:
+                            expr_types.add("dbl")
+                        elif tok_type in ["ntlit", "~ntlit"]:
+                            expr_types.add("nt")
+                        elif tok_type == "strnglit":
+                            expr_types.add("strng")
+                        elif tok_type == "chrlit":
+                            expr_types.add("chr")
+                        elif tok_type == "blnlit":
+                            expr_types.add("bln")
                     
-                    # Handle comparisons based on type
-                    if ("==" in expr_str or "!=" in expr_str):
-                        # String comparisons
-                        if expr_type == "strng" or any(s in expr_str for s in ["name", "\"", "strng"]):
-                            format_parts.append("%d")  # Boolean result
+                    # Check if this is a comparison expression
+                    has_comparison = any(op in expr_str for op in [">", "<", ">=", "<=", "==", "!="])
+                    
+                    if has_comparison:
+                        # ALL comparisons return an integer in C, regardless of operand types
+                        format_parts.append("%d")
+                        
+                        # Handle string comparisons which need special treatment
+                        if "strng" in expr_types or any(s in expr_str for s in ["name", "\"", "strng"]):
                             if "==" in expr_str:
                                 parts = expr_str.split("==")
                                 left = parts[0].strip()
@@ -1128,33 +1110,38 @@ def transpile_from_tokens(token_list, symbol_table=None):
                                 expr_str = f"strcmp({left}, {right}) == 0"
                             elif "!=" in expr_str:
                                 parts = expr_str.split("!=")
-                                left = parts[0].strip()
+                                left = parts[0].strip() 
                                 right = parts[1].strip()
                                 expr_str = f"strcmp({left}, {right}) != 0"
-                        
-                        # Character comparisons - need to handle character literals properly
-                        elif expr_type == "chr" or any(s in expr_str for s in ["letter", "newLetter", "chr", "'"]):
-                            format_parts.append("%d")  # Boolean result
-                            # No special handling needed for char comparisons in C
-                        
-                        # Double comparisons
-                        elif expr_type == "dbl" or any(s in expr_str for s in ["frac", "dbl"]):
-                            format_parts.append("%d")  # Boolean result
-                            # No special handling needed for double comparisons
-                        
-                        # Integer and other comparisons
-                        else:
-                            format_parts.append("%d")  # Boolean result
                     else:
-                        # For non-comparison expressions, set format based on inferred type
-                        if expr_type == "strng":
+                        # For non-comparison expressions, infer the type
+                        if "strng" in expr_types:
                             format_parts.append("%s")
-                        elif expr_type == "dbl":
+                        elif "dbl" in expr_types:
                             format_parts.append("%.2f")
-                        elif expr_type == "chr":
+                        elif "nt" in expr_types:
+                            format_parts.append("%d")
+                        elif "chr" in expr_types:
                             format_parts.append("%c")
+                        elif "bln" in expr_types:
+                            format_parts.append("%d")
                         else:
-                            format_parts.append("%d")  # Default for int, bool
+                            format_parts.append("%d")  # Default to int
+                    
+                    # Convert boolean literals in expressions
+                    for idx, (tok_type, tok_value) in enumerate(arg):
+                        if tok_type == "blnlit":
+                            if tok_value == "tr":
+                                arg[idx] = (tok_type, "1")
+                            elif tok_value == "fls":
+                                arg[idx] = (tok_type, "0")
+                    
+                    # Rebuild expression with converted boolean literals
+                    expr_str = ' '.join(str(val) for _, val in arg)
+                    
+                    # Apply fixes again after rebuilding
+                    expr_str = fix_string_literals(expr_str)
+                    expr_str = fix_char_literals(expr_str)
                     
                     arg_exprs.append(expr_str)
             
