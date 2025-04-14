@@ -15,7 +15,8 @@ class ConsoTranspiler:
             "strng": "char*",
             "bln": "int",  # boolean values in C are integers
             "chr": "char",
-            "vd": "void"
+            "vd": "void", 
+            "dfstrct": "struct"  # struct instantiation
         }
         
         # Mapping of Conso keywords to C equivalents
@@ -55,6 +56,8 @@ class ConsoTranspiler:
         Transpile Conso code to C code.
         Assumes the input code has already passed lexical, syntax, and semantic validation.
         """
+        print("DEBUG: Input to transpile():")
+        print(conso_code)
         # Add standard headers
         c_code = self._generate_headers()
         
@@ -66,8 +69,39 @@ class ConsoTranspiler:
         in_function = False
         indent_level = 0
         
+        # First pass - find struct definitions and process them
         lines = conso_code.split('\n')
         i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            # Process struct definitions first to place them at file scope
+            if line.startswith('strct '):
+                processed_line, struct_lines = self._process_struct(lines, i)
+                if processed_line:
+                    processed_lines.append(processed_line)
+                    # Process struct body lines
+                    bracket_count = 1  # Initialize bracket_count to track nesting
+                    for j in range(1, struct_lines + 1):
+                        if i + j < len(lines):
+                            struct_line = lines[i + j].strip()
+                            if '{' in struct_line:
+                                bracket_count += struct_line.count('{')
+                            if '}' in struct_line:
+                                bracket_count -= struct_line.count('}')
+                            
+                            if struct_line:
+                                processed_lines.append("    " + struct_line)
+                i += struct_lines + 1
+            else:
+                i += 1
+
+        # Second pass - process everything else
+        i = 0
+        # DEBUG: Print all lines before second pass
+        print("DEBUG: Lines before second pass:")
+        for idx, l in enumerate(lines):
+            print(f"{idx}: '{l}'")
         while i < len(lines):
             line = lines[i].strip()
             
@@ -75,6 +109,27 @@ class ConsoTranspiler:
             if not line:
                 i += 1
                 continue
+
+            # Skip lines that are just variable names (e.g., struct2;) to avoid duplicate/erroneous struct declarations
+            if re.match(r'^\w+\s*;$', line):
+                i += 1
+                continue
+
+            # Skip struct definitions (already processed)
+            if line.startswith('strct '):
+                bracket_count = 1  # Initialize bracket_count
+                i += 1
+                while i < len(lines) and bracket_count > 0:
+                    if i < len(lines):
+                        curr_line = lines[i].strip()
+                        if '{' in curr_line:
+                            bracket_count += curr_line.count('{')
+                        if '}' in curr_line:
+                            bracket_count -= curr_line.count('}')
+                        i += 1
+                continue
+            
+            processed_line = ""
             
             # Handle main function
             if line.lstrip().startswith('mn('):
@@ -91,6 +146,10 @@ class ConsoTranspiler:
             # Handle variable declarations
             elif any(line.lstrip().startswith(t + " ") for t in self.type_mapping):
                 processed_line = self._process_declaration(line)
+
+            # Handle struct instantiation
+            elif line.lstrip().startswith('dfstrct '):
+                processed_line = self._process_dfstrct(line)
 
             # Handle print statements
             elif line.lstrip().startswith('prnt('):
@@ -166,6 +225,10 @@ class ConsoTranspiler:
                 processed_line, struct_lines = self._process_struct(lines, i)
                 i += struct_lines  # Skip the processed struct lines
 
+            # Handle struct instantiation
+            elif line.lstrip().startswith('dfstrct '):
+                processed_line = self._process_dfstrct(line)
+
             # Handle closing braces - decrease indent level
             elif line.strip() == '}':
                 indent_level -= 1
@@ -187,7 +250,7 @@ class ConsoTranspiler:
             # Add the processed line to our result
             if processed_line:
                 processed_lines.append(processed_line)
-
+            
             i += 1
         
         # Join all processed lines and return the C code
@@ -624,21 +687,33 @@ char* conso_concat(const char* str1, const char* str2) {
         return line
 
     def _process_struct(self, lines, start_index):
-        """Process a struct declaration"""
-        # "strct MyStruct {" -> "typedef struct MyStruct {"
+        """Process a struct declaration without modifying the original lines list."""
         line = lines[start_index].strip()
-        processed_line = ""
+        processed_lines = []
         struct_lines = 0
-        
+
         if line.startswith('strct '):
             struct_name = line[6:line.find('{')].strip()
-            processed_line = f"typedef struct {struct_name} {{"
+            processed_lines.append(f"typedef struct {struct_name} {{")
             
             # Count the lines in the struct body
             bracket_count = 1
             for i in range(start_index + 1, len(lines)):
                 struct_lines += 1
                 curr_line = lines[i].strip()
+                
+                # Process member declarations (convert Conso types to C types)
+                if any(curr_line.startswith(t + " ") for t in self.type_mapping):
+                    parts = curr_line.split(' ', 1)
+                    member_type = parts[0]
+                    if member_type in self.type_mapping:
+                        c_type = self.type_mapping[member_type]
+                        curr_line = curr_line.replace(member_type + " ", c_type + " ", 1)
+                
+                # Add the processed member line (unless it's just a closing brace)
+                if curr_line not in ('};', '}'):
+                    if curr_line:
+                        processed_lines.append("    " + curr_line)
                 
                 if '{' in curr_line:
                     bracket_count += curr_line.count('{')
@@ -647,12 +722,38 @@ char* conso_concat(const char* str1, const char* str2) {
                 
                 if bracket_count == 0:
                     # Found the end of the struct
-                    if curr_line == '};':
-                        # Replace the closing bracket with the typedef ending
-                        lines[i] = f"}} {struct_name};"
+                    processed_lines.append(f"}} {struct_name};")
                     break
-        
-        return processed_line, struct_lines
+
+        # Join all processed struct lines into a single string
+        return "\n".join(processed_lines), struct_lines
+     
+    def _process_dfstrct(self, line):
+        """Process a struct instantiation statement (dfstrct) to C typedef style."""
+        if not line.lstrip().startswith('dfstrct '):
+            return line
+
+        # Remove 'dfstrct ' and trailing semicolon
+        remaining = line.lstrip()[8:].strip()
+        if remaining.endswith(';'):
+            remaining = remaining[:-1]
+
+        # Normalize whitespace (handle tabs, multiple spaces)
+        remaining = re.sub(r'\s+', ' ', remaining).strip()
+
+        # Split into struct type and variable list
+        parts = remaining.split(' ', 1)
+        if len(parts) != 2:
+            # If parsing fails, return a comment for debugging
+            return f"/* dfstrct parse error: '{line}' */"
+
+        struct_type = parts[0].strip()
+        vars_list = parts[1].strip()
+
+        # Debug: print(f"dfstrct: struct_type='{struct_type}', vars_list='{vars_list}'")
+
+        # Use typedef style: myStruct struct1, struct2;
+        return f"{struct_type} {vars_list};"
 
     def _process_other_statement(self, line):
         """Process other statements (assignments, expressions, etc.)"""
@@ -796,68 +897,77 @@ def transpile_from_tokens(token_list, symbol_table=None):
             continue
 
         # Variable declarations (nt, dbl, bln, chr, strng)
+        # Special case: skip dfstrct in variable declaration logic
+        if ttype == "dfstrct":
+            # Handled in its own block below
+            i += 1
+            continue
+
         if ttype in transpiler.type_mapping:
             var_type = transpiler.type_mapping[ttype]
             j = i + 1
-            
+
             # For collecting multiple declarations of the same type
             variables = []
-            
+            has_assignment = False
+
             # Process all variables of this type until semicolon
             while j < n:
                 # Skip to identifier
                 if get_token_type_value(token_list[j])[0] == "id":
                     var_name = get_token_type_value(token_list[j])[1]
                     j += 1
-                    
+
                     # Check for array dimensions
                     dimensions = []
                     has_dimensions = False
-                    
+
                     # Look for array dimensions [...]
                     while j < n and get_token_type_value(token_list[j])[0] == "[":
                         has_dimensions = True
                         j += 1  # Skip '['
-                        
+
                         # Collect dimension size
                         dim_size = ""
                         while j < n and get_token_type_value(token_list[j])[0] != "]":
                             dim_size += str(get_token_type_value(token_list[j])[1])
                             j += 1
-                        
+
                         if j < n and get_token_type_value(token_list[j])[0] == "]":
                             dimensions.append(dim_size)
                             j += 1
-                    
+
                     # Format dimensions for C code
                     dim_str = "".join(f"[{d}]" for d in dimensions)
-                    
+
                     # Check for assignment
+                    value = None
                     if j < n and get_token_type_value(token_list[j])[0] == "=":
+                        has_assignment = True
                         j += 1
-                        
+
                         # Get the value
                         value_tokens = []
                         brace_count = 0
                         while j < n:
                             next_token_type, next_token_value = get_token_type_value(token_list[j])
-                            
+
                             # End of this declaration
                             if next_token_type == ";" and brace_count == 0:
                                 break
                             if next_token_type == "," and brace_count == 0:
                                 break
-                            
+
                             # Track braces for array initialization
                             if next_token_type == "{":
                                 brace_count += 1
                             elif next_token_type == "}":
                                 brace_count -= 1
-                                
+
                             # Add token to value
                             value_tokens.append((next_token_type, next_token_value))
                             j += 1
-                        
+
                         # Process the value based on type
                         processed_value = ""
                         for val_type, val in value_tokens:
@@ -872,72 +982,156 @@ def transpile_from_tokens(token_list, symbol_table=None):
                                 processed_value += f"'{val}'"
                             else:
                                 processed_value += str(val)
-                        
-                        # For arrays, we keep the full declaration (type, name, dimensions, initialization)
-                        if has_dimensions:
-                            if ttype == "strng":
-                                # Handle string arrays separately
-                                variables.append((var_name, dim_str, processed_value, True))
-                            else:
-                                variables.append((var_name, dim_str, processed_value, True))
-                        else:
-                            # Regular variable
-                            variables.append((var_name, "", processed_value, False))
-                    else:
-                        # Just a variable declaration without assignment - add default initialization
-                        if has_dimensions:
-                            # Array without initialization - default to {0}
-                            if ttype == "strng":
-                                variables.append((var_name, dim_str, "{\"\"}", True))
-                            else:
-                                variables.append((var_name, dim_str, "{0}", True))
-                        else:
-                            # Regular variable without initialization
-                            if ttype in transpiler.default_values:
-                                default_value = transpiler.default_values[ttype]
-                                variables.append((var_name, "", default_value, False))
-                            else:
-                                variables.append((var_name, "", None, False))
-                    
+                        value = processed_value
+
+                    variables.append((var_name, dim_str, value, has_dimensions))
+
                     # Check if there's another declaration (comma)
                     if j < n and get_token_type_value(token_list[j])[0] == ",":
                         j += 1
                         continue
-                
+
                 # End of declarations for this type
                 if j < n and get_token_type_value(token_list[j])[0] == ";":
                     j += 1
                     break
-                
+
                 j += 1
-            
+
             # Add the declaration line(s)
             if variables:
-                for var_name, dimensions, value, is_array in variables:
-                    if is_array:
-                        # For array declarations
-                        if value is not None:
-                            output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name}{dimensions} = {value};")
+                # If any variable has assignment or is an array, emit separate lines
+                if has_assignment or any(is_array for _, _, _, is_array in variables):
+                    for var_name, dimensions, value, is_array in variables:
+                        if is_array:
+                            # For array declarations
+                            if value is not None:
+                                output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name}{dimensions} = {value};")
+                            else:
+                                output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name}{dimensions};")
+                        elif ttype == "strng":
+                            # For string variables
+                            if value is not None:
+                                output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name} = {value};")
+                            else:
+                                output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name};")
                         else:
-                            output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name}{dimensions};")
-                    elif ttype == "strng":
-                        # For string variables
-                        if value is not None:
-                            output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name} = {value};")
-                        else:
-                            output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name};")
+                            # For regular variables of other types
+                            if value is not None:
+                                output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name} = {value};")
+                            else:
+                                output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name};")
+                else:
+                    # No assignments, emit a single line for all variables
+                    var_list = ", ".join(f"{var_name}{dimensions}" for var_name, dimensions, _, _ in variables)
+                    output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_list};")
+
+            i = j
+            continue
+
+        # 1. First, add this case for struct definitions (strct)
+        elif ttype == "strct":
+            j = i + 1
+            struct_name = ""
+            
+            # Get struct name
+            if j < n and get_token_type_value(token_list[j])[0] == "id":
+                struct_name = get_token_type_value(token_list[j])[1]
+                j += 1
+            
+            # Look for opening brace
+            while j < n and get_token_type_value(token_list[j])[0] != "{":
+                j += 1
+            
+            if j < n:  # Found opening brace
+                # Output struct definition as typedef for flexible usage
+                output_lines.append(f"typedef struct {struct_name} {{")
+                indent_level += 1
+                j += 1  # Skip opening brace
+
+                # Process struct members until closing brace
+                while j < n:
+                    curr_type, curr_value = get_token_type_value(token_list[j])
+
+                    if curr_type == "}":
+                        # End of struct definition
+                        indent_level -= 1
+                        output_lines.append(transpiler._indent(indent_level) + f"}} {struct_name};")
+                        j += 1  # Skip closing brace
+
+                        # Skip semicolon if present
+                        if j < n and get_token_type_value(token_list[j])[0] == ";":
+                            j += 1
+                        break
+                    
+                    # Process struct members (variable declarations)
+                    if curr_type in transpiler.type_mapping:
+                        c_type = transpiler.type_mapping[curr_type]
+                        j += 1  # Skip type token
+                        
+                        # Get member name
+                        if j < n and get_token_type_value(token_list[j])[0] == "id":
+                            member_name = get_token_type_value(token_list[j])[1]
+                            j += 1
+                            
+                            # Skip to semicolon
+                            while j < n and get_token_type_value(token_list[j])[0] != ";":
+                                j += 1
+                            
+                            # Add member declaration
+                            output_lines.append(transpiler._indent(indent_level) + f"{c_type} {member_name};")
+                            
+                            if j < n:  # Skip semicolon
+                                j += 1
                     else:
-                        # For regular variables of other types
-                        formatted_vars = []
-                        
-                        if value is not None:
-                            formatted_vars.append(f"{var_name} = {value}")
-                        else:
-                            formatted_vars.append(var_name)
-                        
-                        output_lines.append(transpiler._indent(indent_level) + f"{var_type} {', '.join(formatted_vars)};")
+                        j += 1  # Skip unknown tokens
             
             i = j
+            continue
+
+        # 2. And add this case for struct instantiations (dfstrct)
+        elif ttype == "dfstrct":
+            var_type = "struct"  # In C, we use 'struct StructName'
+            j = i + 1
+
+            # Get struct type name
+            if j < n and get_token_type_value(token_list[j])[0] == "id":
+                struct_type = get_token_type_value(token_list[j])[1]
+                j += 1
+
+                # Process variable names
+                variables = []
+                while j < n:
+                    curr_type, curr_value = get_token_type_value(token_list[j])
+                    if curr_type == "id":
+                        variables.append(curr_value)
+                        j += 1
+                        # Check for comma (more variables) or semicolon (end)
+                        if j < n:
+                            next_type, _ = get_token_type_value(token_list[j])
+                            if next_type == ",":
+                                j += 1  # Skip comma
+                            elif next_type == ";":
+                                j += 1  # Skip semicolon
+                                break
+                    else:
+                        # Skip other tokens (unless it's a semicolon ending the statement)
+                        if curr_type == ";":
+                            j += 1
+                            break
+                        j += 1
+
+                # Generate struct instantiation code with all collected variables
+                if variables:
+                    var_list = ", ".join(variables)
+                    c_code = f"struct {struct_type} {var_list};"
+                    output_lines.append(transpiler._indent(indent_level) + c_code)
+            # After handling dfstrct, skip all processed tokens
+            i = j
+            continue
+            
+            i = j
+            print("--- End dfstrct debug ---\n")
             continue
 
         # Print statement
