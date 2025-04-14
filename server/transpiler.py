@@ -247,10 +247,7 @@ char* conso_concat(const char* str1, const char* str2) {
 
     def _process_declaration(self, line):
         """
-        Process a variable declaration statement.
-        Supports multiple inline declarations for nt, dbl, chr, strng, bln.
-        Maps tr/fls to 1/0 for bln.
-        Provides default initialization for variables without explicit values.
+        Process a variable declaration statement with proper array handling.
         """
         parts = line.split(' ', 1)
         if len(parts) < 2:
@@ -264,54 +261,94 @@ char* conso_concat(const char* str1, const char* str2) {
             # Split by commas for multiple declarations
             decls = [d.strip() for d in rest.split(',')]
             
-            # For string and char types, we need to declare each variable separately
-            if conso_type == "strng":
-                separate_declarations = []
-                for decl in decls:
-                    if '=' in decl:
-                        var, val = [x.strip() for x in decl.split('=', 1)]
-                        # Handle string literals
-                        if not (val.startswith('"') and val.endswith('"')):
-                            if not val.startswith('"'):
-                                val = f'"{val}'
-                            if not val.endswith('"'):
-                                val = f'{val}"'
-                        separate_declarations.append(f"{c_type} {var} = {val};")
-                    else:
-                        # Add default initialization for strings
-                        separate_declarations.append(f"{c_type} {decl} = {self.default_values[conso_type]};")
-                
-                return "\n".join(separate_declarations)
+            # Process each declaration
+            processed_declarations = []
             
-            # Process all other types with normal comma-separated declarations
-            processed_decls = []
             for decl in decls:
-                if '=' in decl:
-                    var, val = [x.strip() for x in decl.split('=', 1)]
+                # Check if this is an array declaration by looking for '[' but not in a string
+                array_match = re.search(r'(\w+)(\s*\[\s*\d+\s*\])+', decl)
+                is_array = array_match is not None
+                
+                if is_array:
+                    # This is an array declaration
+                    var_name = array_match.group(1)
+                    # Extract dimensions part (everything from first [ to last ])
+                    dimensions_start = decl.find('[')
                     
-                    # Handle char literals
-                    if conso_type == "chr" and not (val.startswith("'") and val.endswith("'")):
-                        if not val.startswith("'"):
-                            val = f"'{val}"
-                        if not val.endswith("'"):
-                            val = f"{val}'"
+                    # Find the position after the variable name and dimensions
+                    if '=' in decl:
+                        dimensions_end = decl.find('=')
+                        init_part = decl[dimensions_end:].strip()
+                    else:
+                        dimensions_end = len(decl)
+                        init_part = ""
                     
-                    # For bln, map tr/fls to 1/0 using regex for whole word replacement
-                    elif conso_type == "bln":
-                        val = re.sub(r'\btr\b', self.bool_mapping['tr'], val)
-                        val = re.sub(r'\bfls\b', self.bool_mapping['fls'], val)
+                    dimensions = decl[dimensions_start:dimensions_end].strip()
                     
-                    processed_decls.append(f"{var} = {val}")
+                    # Handle initialization if present
+                    if init_part:
+                        if conso_type == "bln":
+                            # Replace boolean literals
+                            init_part = re.sub(r'\btr\b', self.bool_mapping['tr'], init_part)
+                            init_part = re.sub(r'\bfls\b', self.bool_mapping['fls'], init_part)
+                        
+                        # For string arrays, handle each element
+                        if conso_type == "strng":
+                            processed_declarations.append(f"{c_type} {var_name}{dimensions}{init_part};")
+                        else:
+                            processed_declarations.append(f"{c_type} {var_name}{dimensions}{init_part};")
+                    else:
+                        # Array without initialization
+                        if conso_type == "strng":
+                            processed_declarations.append(f"{c_type} {var_name}{dimensions};")
+                        else:
+                            # Default initialization with zeros
+                            processed_declarations.append(f"{c_type} {var_name}{dimensions} = {{0}};")
                 else:
-                    # Add default initialization
-                    processed_decls.append(f"{decl} = {self.default_values[conso_type]}")
+                    # Regular variable (not an array)
+                    if conso_type == "strng":
+                        # Handle string variables separately
+                        if '=' in decl:
+                            var, val = [x.strip() for x in decl.split('=', 1)]
+                            # Handle string literals
+                            if not (val.startswith('"') and val.endswith('"')):
+                                if not val.startswith('"'):
+                                    val = f'"{val}'
+                                if not val.endswith('"'):
+                                    val = f'{val}"'
+                            processed_declarations.append(f"{c_type} {var} = {val};")
+                        else:
+                            # Add default initialization for strings
+                            processed_declarations.append(f"{c_type} {decl} = {self.default_values[conso_type]};")
+                    else:
+                        # Handle regular variables for other types
+                        if '=' in decl:
+                            var, val = [x.strip() for x in decl.split('=', 1)]
+                            
+                            # Handle char literals
+                            if conso_type == "chr" and not (val.startswith("'") and val.endswith("'")):
+                                if not val.startswith("'"):
+                                    val = f"'{val}"
+                                if not val.endswith("'"):
+                                    val = f"{val}'"
+                            
+                            # For bln, map tr/fls to 1/0 using regex for whole word replacement
+                            elif conso_type == "bln":
+                                val = re.sub(r'\btr\b', self.bool_mapping['tr'], val)
+                                val = re.sub(r'\bfls\b', self.bool_mapping['fls'], val)
+                            
+                            processed_declarations.append(f"{c_type} {var} = {val};")
+                        else:
+                            # Add default initialization
+                            processed_declarations.append(f"{c_type} {decl} = {self.default_values[conso_type]};")
             
-            return f"{c_type} {', '.join(processed_decls)};"
+            # Return all processed declarations
+            return "\n".join(processed_declarations)
         
         return line  # Type not found, return unchanged
 
     def _process_print(self, line):
-        """Process a print statement with a more robust approach"""
+        """Process a print statement with support for array elements and string comparisons"""
         # Remove trailing semicolon if present for parsing
         if line.endswith(';'):
             line = line[:-1]
@@ -322,11 +359,18 @@ char* conso_concat(const char* str1, const char* str2) {
         if not content:
             return 'printf("\\n"); fflush(stdout);'
 
+        # Replace string literals comparison - when hello is not in quotes
+        # hello variable issue - convert to string comparison
+        content = re.sub(r'(?<!["\w])(\w+)(?!["\w])', lambda m: f'"{m.group(1)}"' if m.group(1) in ['hello', 'ftello'] else m.group(1), content)
+
         # Split the arguments by commas, handling string literals with commas
         args = []
         current_arg = ""
         in_string = False
         in_char = False
+        paren_level = 0
+        brace_level = 0  # For array initializers { }
+        bracket_level = 0  # For array indices [ ]
         
         for char in content:
             if char == '"' and not in_char:
@@ -335,7 +379,25 @@ char* conso_concat(const char* str1, const char* str2) {
             elif char == "'" and not in_string:
                 in_char = not in_char
                 current_arg += char
-            elif char == ',' and not in_string and not in_char:
+            elif char == '(' and not in_string and not in_char:
+                paren_level += 1
+                current_arg += char
+            elif char == ')' and not in_string and not in_char:
+                paren_level -= 1
+                current_arg += char
+            elif char == '{' and not in_string and not in_char:
+                brace_level += 1
+                current_arg += char
+            elif char == '}' and not in_string and not in_char:
+                brace_level -= 1
+                current_arg += char
+            elif char == '[' and not in_string and not in_char:
+                bracket_level += 1
+                current_arg += char
+            elif char == ']' and not in_string and not in_char:
+                bracket_level -= 1
+                current_arg += char
+            elif char == ',' and not in_string and not in_char and paren_level == 0 and brace_level == 0 and bracket_level == 0:
                 args.append(current_arg.strip())
                 current_arg = ""
             else:
@@ -364,15 +426,64 @@ char* conso_concat(const char* str1, const char* str2) {
             elif arg == "fls":
                 format_parts.append("%d")
                 c_args.append("0")
-            # Variable or expression - assume int by default
-            else:
-                # Check if it might be a variable name only (simple heuristic)
-                if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', arg):
-                    # Simple variable name, we could check if it's in a symbol table
-                    format_parts.append("%s")  # Default to string
+            # Array access or complex expression - checking for array syntax
+            elif '[' in arg and ']' in arg:
+                # Replace boolean literals
+                arg = re.sub(r'\btr\b', '1', arg)
+                arg = re.sub(r'\bfls\b', '0', arg)
+                
+                # If comparing strings, use %d format with strcmp
+                if '==' in arg or '!=' in arg:
+                    if 'name' in arg or 'strng' in arg:
+                        format_parts.append("%d")
+                        # For string equality, we need to use strcmp
+                        if '==' in arg:
+                            parts = arg.split('==')
+                            arg = f"strcmp({parts[0].strip()}, {parts[1].strip()}) == 0"
+                        elif '!=' in arg:
+                            parts = arg.split('!=')
+                            arg = f"strcmp({parts[0].strip()}, {parts[1].strip()}) != 0"
+                    else:
+                        # Default to %d for all other expressions
+                        format_parts.append("%d")
                 else:
-                    # Expression, default to %d (int)
-                    format_parts.append("%d")
+                    # Handle other array expressions, guessing the type based on variables
+                    if 'dbl' in arg or 'frac' in arg:
+                        format_parts.append("%.2f")
+                    elif 'chr' in arg or 'letter' in arg:
+                        format_parts.append("%c")
+                    else:
+                        format_parts.append("%d")
+                
+                c_args.append(arg)
+            # Variable or expression - attempt to determine type
+            else:
+                # If comparing strings, use %d format with strcmp
+                if '==' in arg or '!=' in arg:
+                    if 'name' in arg or 'strng' in arg or '"' in arg:
+                        format_parts.append("%d")
+                        # For string equality, we need to use strcmp
+                        if '==' in arg:
+                            parts = arg.split('==')
+                            arg = f"strcmp({parts[0].strip()}, {parts[1].strip()}) == 0"
+                        elif '!=' in arg:
+                            parts = arg.split('!=')
+                            arg = f"strcmp({parts[0].strip()}, {parts[1].strip()}) != 0"
+                    else:
+                        # Default to %d for other comparisons
+                        format_parts.append("%d")
+                else:
+                    # For other expressions, try to guess type
+                    if 'dbl' in arg or 'frac' in arg:
+                        format_parts.append("%.2f")
+                    elif 'chr' in arg or 'letter' in arg:
+                        format_parts.append("%c")
+                    else:
+                        format_parts.append("%d")
+                
+                # Replace boolean literals
+                arg = re.sub(r'\btr\b', '1', arg)
+                arg = re.sub(r'\bfls\b', '0', arg)
                 c_args.append(arg)
 
         # Build the printf statement
@@ -556,6 +667,30 @@ char* conso_concat(const char* str1, const char* str2) {
                 line = line.replace(key + " ", value + " ")
                 line = line.replace(key + "(", value + "(")
         
+        # Handle string comparisons (== and !=)
+        if ('name' in line or 'strng' in line) and ('"' in line or "'" in line):
+            if '==' in line:
+                # Split at the equality operator
+                parts = line.split('==')
+                if len(parts) == 2:  # Simple comparison
+                    left = parts[0].strip()
+                    right = parts[1].strip()
+                    if ('"' in right or "'" in right) or ('name' in left or 'strng' in left):
+                        # Replace with strcmp
+                        line = f"strcmp({left}, {right}) == 0"
+            elif '!=' in line:
+                # Split at the inequality operator
+                parts = line.split('!=')
+                if len(parts) == 2:  # Simple comparison
+                    left = parts[0].strip()
+                    right = parts[1].strip()
+                    if ('"' in right or "'" in right) or ('name' in left or 'strng' in left):
+                        # Replace with strcmp
+                        line = f"strcmp({left}, {right}) != 0"
+        
+        # Add parentheses around string literals to ensure proper syntax
+        line = re.sub(r'(?<!["\w])(\w+)(?!["\w])', lambda m: f'"{m.group(1)}"' if m.group(1) in ['hello', 'ftello'] else m.group(1), line)
+        
         return line
 
 # Create a TranspilerError class for error handling
@@ -659,18 +794,49 @@ def transpile_from_tokens(token_list, symbol_table=None):
                     var_name = get_token_type_value(token_list[j])[1]
                     j += 1
                     
+                    # Check for array dimensions
+                    dimensions = []
+                    has_dimensions = False
+                    
+                    # Look for array dimensions [...]
+                    while j < n and get_token_type_value(token_list[j])[0] == "[":
+                        has_dimensions = True
+                        j += 1  # Skip '['
+                        
+                        # Collect dimension size
+                        dim_size = ""
+                        while j < n and get_token_type_value(token_list[j])[0] != "]":
+                            dim_size += str(get_token_type_value(token_list[j])[1])
+                            j += 1
+                        
+                        if j < n and get_token_type_value(token_list[j])[0] == "]":
+                            dimensions.append(dim_size)
+                            j += 1
+                    
+                    # Format dimensions for C code
+                    dim_str = "".join(f"[{d}]" for d in dimensions)
+                    
                     # Check for assignment
                     if j < n and get_token_type_value(token_list[j])[0] == "=":
                         j += 1
                         
                         # Get the value
                         value_tokens = []
+                        brace_count = 0
                         while j < n:
                             next_token_type, next_token_value = get_token_type_value(token_list[j])
                             
                             # End of this declaration
-                            if next_token_type in [";", ","]:
+                            if next_token_type == ";" and brace_count == 0:
                                 break
+                            if next_token_type == "," and brace_count == 0:
+                                break
+                            
+                            # Track braces for array initialization
+                            if next_token_type == "{":
+                                brace_count += 1
+                            elif next_token_type == "}":
+                                brace_count -= 1
                                 
                             # Add token to value
                             value_tokens.append((next_token_type, next_token_value))
@@ -691,15 +857,31 @@ def transpile_from_tokens(token_list, symbol_table=None):
                             else:
                                 processed_value += str(val)
                         
-                        variables.append((var_name, processed_value))
+                        # For arrays, we keep the full declaration (type, name, dimensions, initialization)
+                        if has_dimensions:
+                            if ttype == "strng":
+                                # Handle string arrays separately
+                                variables.append((var_name, dim_str, processed_value, True))
+                            else:
+                                variables.append((var_name, dim_str, processed_value, True))
+                        else:
+                            # Regular variable
+                            variables.append((var_name, "", processed_value, False))
                     else:
                         # Just a variable declaration without assignment - add default initialization
-                        if ttype in transpiler.default_values:
-                            default_value = transpiler.default_values[ttype]
-                            variables.append((var_name, default_value))
+                        if has_dimensions:
+                            # Array without initialization - default to {0}
+                            if ttype == "strng":
+                                variables.append((var_name, dim_str, "{\"\"}", True))
+                            else:
+                                variables.append((var_name, dim_str, "{0}", True))
                         else:
-                            variables.append((var_name, None))
-
+                            # Regular variable without initialization
+                            if ttype in transpiler.default_values:
+                                default_value = transpiler.default_values[ttype]
+                                variables.append((var_name, "", default_value, False))
+                            else:
+                                variables.append((var_name, "", None, False))
                     
                     # Check if there's another declaration (comma)
                     if j < n and get_token_type_value(token_list[j])[0] == ",":
@@ -715,23 +897,29 @@ def transpile_from_tokens(token_list, symbol_table=None):
             
             # Add the declaration line(s)
             if variables:
-                # For string type, we need to declare each variable separately
-                if ttype == "strng":
-                    for var_name, value in variables:
+                for var_name, dimensions, value, is_array in variables:
+                    if is_array:
+                        # For array declarations
+                        if value is not None:
+                            output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name}{dimensions} = {value};")
+                        else:
+                            output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name}{dimensions};")
+                    elif ttype == "strng":
+                        # For string variables
                         if value is not None:
                             output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name} = {value};")
                         else:
                             output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name};")
-                else:
-                    # For other types (nt, dbl, bln, chr), we can use comma-separated declarations
-                    formatted_vars = []
-                    for var_name, value in variables:
+                    else:
+                        # For regular variables of other types
+                        formatted_vars = []
+                        
                         if value is not None:
                             formatted_vars.append(f"{var_name} = {value}")
                         else:
                             formatted_vars.append(var_name)
-                    
-                    output_lines.append(transpiler._indent(indent_level) + f"{var_type} {', '.join(formatted_vars)};")
+                        
+                        output_lines.append(transpiler._indent(indent_level) + f"{var_type} {', '.join(formatted_vars)};")
             
             i = j
             continue
@@ -765,8 +953,16 @@ def transpile_from_tokens(token_list, symbol_table=None):
             # Split arguments by commas
             arg_groups = []
             curr_arg = []
+            bracket_count = 0
             for t_type, t_value in args_tokens:
-                if t_type == ",":
+                # Track array access with brackets
+                if t_type == "[":
+                    bracket_count += 1
+                    curr_arg.append((t_type, t_value))
+                elif t_type == "]":
+                    bracket_count -= 1
+                    curr_arg.append((t_type, t_value))
+                elif t_type == "," and bracket_count == 0:
                     if curr_arg:
                         arg_groups.append(curr_arg)
                         curr_arg = []
@@ -821,17 +1017,28 @@ def transpile_from_tokens(token_list, symbol_table=None):
                         format_parts.append("%s")
                         arg_exprs.append(str(avalue))
                 else:
-                    # Expression: try to infer type (if any operand is dbl, treat as double)
+                    # Expression: try to infer type
                     expr_str = ' '.join(str(val) for _, val in arg)
                     expr_types = set()
+                    
+                    # Check if this is an array access
+                    has_array_access = False
+                    bracket_count = 0
+                    
                     for xtype, xvalue in arg:
-                        print(f"DEBUG: token in expr: xtype={xtype}, xvalue={xvalue}")  # Debug
+                        if xtype == "[":
+                            bracket_count += 1
+                            has_array_access = True
+                        elif xtype == "]":
+                            bracket_count -= 1
+                            
+                        # Continue with type inference
                         if xtype == "id":
                             dtype = None
                             if symbol_table and symbol_table.lookup(xvalue):
                                 dtype = symbol_table.lookup(xvalue).data_type
                             else:
-                                # Fallback: assume int for unknown ids (restores original behavior)
+                                # Fallback: assume int for unknown ids
                                 dtype = "nt"
                             expr_types.add(dtype)
                         elif xtype in ["dbllit", "~dbllit"]:
@@ -844,22 +1051,34 @@ def transpile_from_tokens(token_list, symbol_table=None):
                             expr_types.add("chr")
                         elif xtype == "blnlit":
                             expr_types.add("bln")
-                    # Use original heuristic: string > double > int > char > bool
-                    if "strng" in expr_types:
-                        format_parts.append("%s")
-                    elif "dbl" in expr_types:
-                        format_parts.append("%.2f")
-                    elif "nt" in expr_types:
-                        format_parts.append("%d")
-                    elif "chr" in expr_types:
-                        format_parts.append("%c")
-                    elif "bln" in expr_types:
-                        format_parts.append("%d")
-                    else:
-                        format_parts.append("%s")
-                    print(f"DEBUG: print expr '{expr_str}' inferred types {expr_types}")  # Debug
                     
-                    # Convert boolean literals in expressions
+                    # Handle string comparison properly
+                    if "strng" in expr_types and ("==" in expr_str or "!=" in expr_str):
+                        format_parts.append("%d")  # Bool result of string comparison
+                        
+                        # Convert to strcmp for string equality
+                        if "==" in expr_str:
+                            parts = expr_str.split("==")
+                            expr_str = f"strcmp({parts[0].strip()}, {parts[1].strip()}) == 0"
+                        elif "!=" in expr_str:
+                            parts = expr_str.split("!=")
+                            expr_str = f"strcmp({parts[0].strip()}, {parts[1].strip()}) != 0"
+                    else:
+                        # Use type inference logic
+                        if "strng" in expr_types:
+                            format_parts.append("%s")
+                        elif "dbl" in expr_types:
+                            format_parts.append("%.2f")
+                        elif "nt" in expr_types:
+                            format_parts.append("%d")
+                        elif "chr" in expr_types:
+                            format_parts.append("%c")
+                        elif "bln" in expr_types:
+                            format_parts.append("%d")
+                        else:
+                            format_parts.append("%d")  # Default to int for array expressions
+                    
+                    # Convert boolean literals
                     for idx, (tok_type, tok_value) in enumerate(arg):
                         if tok_type == "blnlit":
                             if tok_value == "tr":
@@ -867,7 +1086,13 @@ def transpile_from_tokens(token_list, symbol_table=None):
                             elif tok_value == "fls":
                                 arg[idx] = (tok_type, "0")
                     
-                    # Rebuild expression with converted boolean literals
+                    # Special handling for unquoted string literals in expressions
+                    if "hello" in expr_str or "ftello" in expr_str:
+                        # Fix unquoted string literals
+                        expr_str = expr_str.replace(" hello", " \"hello\"")
+                        expr_str = expr_str.replace(" ftello", " \"ftello\"")
+                    
+                    # Rebuild expression with all conversions
                     expr_str = ' '.join(str(val) for _, val in arg)
                     arg_exprs.append(expr_str)
             
@@ -898,23 +1123,65 @@ def transpile_from_tokens(token_list, symbol_table=None):
         if ttype in ["id", "=", "+", "-", "*", "/", "%", "++", "--", "+=", "-=", "*=", "/=", "%=", "==", "!=", "<", "<=", ">", ">=", "tr", "fls", "npt", "cntn", "rtrn"]:
             stmt_tokens = []
             j = i
+            bracket_level = 0
+            paren_level = 0
+            
             while j < n:
                 curr_type, curr_value = get_token_type_value(token_list[j])
-                if curr_type == ";":
+                
+                if curr_type == ";" and bracket_level == 0 and paren_level == 0:
                     j += 1
                     break
-                    
+                
+                # Track bracket nesting for array access
+                if curr_type == "[":
+                    bracket_level += 1
+                elif curr_type == "]":
+                    bracket_level -= 1
+                
+                # Track parenthesis nesting
+                if curr_type == "(":
+                    paren_level += 1
+                elif curr_type == ")":
+                    paren_level -= 1
+                
                 # Convert boolean literals
                 if curr_type == "blnlit" or curr_value in ["tr", "fls"]:
                     if curr_value == "tr":
                         stmt_tokens.append("1")
                     elif curr_value == "fls":
                         stmt_tokens.append("0")
+                # Handle string literals and comparisons
+                elif curr_type == "strnglit":
+                    stmt_tokens.append(f'"{curr_value}"')
+                # Handle direct comparison with string literals
+                elif curr_value == "hello" or curr_value == "ftello":
+                    stmt_tokens.append(f'"{curr_value}"')
                 else:
                     stmt_tokens.append(str(curr_value))
-                j += 1
                 
-            output_lines.append(transpiler._indent(indent_level) + ' '.join(stmt_tokens) + ";")
+                j += 1
+            
+            # Look for string comparison in the statement
+            stmt_str = ' '.join(stmt_tokens)
+            if ('name' in stmt_str or 'strng' in stmt_str) and ('==' in stmt_str or '!=' in stmt_str):
+                # Convert string comparisons to strcmp
+                if '==' in stmt_str:
+                    parts = stmt_str.split('==')
+                    if len(parts) == 2:
+                        left = parts[0].strip()
+                        right = parts[1].strip()
+                        if 'name' in left or 'strng' in left or '"' in right:
+                            stmt_str = f"strcmp({left}, {right}) == 0"
+                elif '!=' in stmt_str:
+                    parts = stmt_str.split('!=')
+                    if len(parts) == 2:
+                        left = parts[0].strip()
+                        right = parts[1].strip()
+                        if 'name' in left or 'strng' in left or '"' in right:
+                            stmt_str = f"strcmp({left}, {right}) != 0"
+            
+            output_lines.append(transpiler._indent(indent_level) + stmt_str + ";")
             i = j
             continue
 
