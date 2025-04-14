@@ -4,6 +4,7 @@ This module converts Conso code to C code, assuming the input has already passed
 lexical, syntax and semantic analysis.
 """
 import sys
+import re
 
 class ConsoTranspiler:
     def __init__(self):
@@ -38,6 +39,16 @@ class ConsoTranspiler:
             "tr": "1",
             "fls": "0"
         }
+
+        # Default values for uninitialized variables
+        self.default_values = {
+            "nt": "0",
+            "dbl": "0.00",
+            "strng": "\"\"",
+            "bln": "0",  # false
+            "chr": "'/'"
+        }
+
 
     def transpile(self, conso_code):
         """
@@ -235,19 +246,67 @@ char* conso_concat(const char* str1, const char* str2) {
 """
 
     def _process_declaration(self, line):
-        """Process a variable declaration statement"""
-        # Handle variable declarations like "nt x = 5;"
+        """
+        Process a variable declaration statement.
+        Supports multiple inline declarations for nt, dbl, chr, strng, bln.
+        Maps tr/fls to 1/0 for bln.
+        Provides default initialization for variables without explicit values.
+        """
         parts = line.split(' ', 1)
         if len(parts) < 2:
             return line  # Not enough parts, return unchanged
-        
+
         conso_type = parts[0]
-        rest = parts[1]
-        
+        rest = parts[1].rstrip(';')  # Remove trailing semicolon for processing
+
         if conso_type in self.type_mapping:
             c_type = self.type_mapping[conso_type]
-            # Replace the Conso type with the C type
-            return f"{c_type} {rest}"
+            # Split by commas for multiple declarations
+            decls = [d.strip() for d in rest.split(',')]
+            
+            # For string and char types, we need to declare each variable separately
+            if conso_type == "strng":
+                separate_declarations = []
+                for decl in decls:
+                    if '=' in decl:
+                        var, val = [x.strip() for x in decl.split('=', 1)]
+                        # Handle string literals
+                        if not (val.startswith('"') and val.endswith('"')):
+                            if not val.startswith('"'):
+                                val = f'"{val}'
+                            if not val.endswith('"'):
+                                val = f'{val}"'
+                        separate_declarations.append(f"{c_type} {var} = {val};")
+                    else:
+                        # Add default initialization for strings
+                        separate_declarations.append(f"{c_type} {decl} = {self.default_values[conso_type]};")
+                
+                return "\n".join(separate_declarations)
+            
+            # Process all other types with normal comma-separated declarations
+            processed_decls = []
+            for decl in decls:
+                if '=' in decl:
+                    var, val = [x.strip() for x in decl.split('=', 1)]
+                    
+                    # Handle char literals
+                    if conso_type == "chr" and not (val.startswith("'") and val.endswith("'")):
+                        if not val.startswith("'"):
+                            val = f"'{val}"
+                        if not val.endswith("'"):
+                            val = f"{val}'"
+                    
+                    # For bln, map tr/fls to 1/0 using regex for whole word replacement
+                    elif conso_type == "bln":
+                        val = re.sub(r'\btr\b', self.bool_mapping['tr'], val)
+                        val = re.sub(r'\bfls\b', self.bool_mapping['fls'], val)
+                    
+                    processed_decls.append(f"{var} = {val}")
+                else:
+                    # Add default initialization
+                    processed_decls.append(f"{decl} = {self.default_values[conso_type]}")
+            
+            return f"{c_type} {', '.join(processed_decls)};"
         
         return line  # Type not found, return unchanged
 
@@ -259,36 +318,69 @@ char* conso_concat(const char* str1, const char* str2) {
         # Extract the content inside the parentheses
         content = line[line.find('(')+1:line.rfind(')')].strip()
 
-        # Case 1: String literal only - prnt("Hello");
-        if content.startswith('"') and content.endswith('"'):
-            string_content = content[1:-1]
-            if "\\n" not in string_content:
-                string_content += "\\n"
-            return f'printf("{string_content}"); fflush(stdout);'
+        # If empty print statement
+        if not content:
+            return 'printf("\\n"); fflush(stdout);'
 
-        # Case 2: String + expression(s) - prnt("The answer is: ", expr);
-        elif content.startswith('"') and ',' in content:
-            # Split on the first comma after the string
-            first_quote_end = content.find('"', 1)
-            if first_quote_end != -1:
-                format_str = content[1:first_quote_end]
-                args = content[first_quote_end+2:].strip()  # skip ","
-                # If the format string does not contain any %, append %d or %f for each argument
-                if "%" not in format_str:
-                    # Support multiple arguments (comma-separated)
-                    arg_list = [a.strip() for a in args.split(",")]
-                    # Default: use %d for each argument
-                    format_str += " " + " ".join(["%d" for _ in arg_list])
-                if "\\n" not in format_str:
-                    format_str += "\\n"
-                return f'printf("{format_str}", {args}); fflush(stdout);'
+        # Split the arguments by commas, handling string literals with commas
+        args = []
+        current_arg = ""
+        in_string = False
+        in_char = False
+        
+        for char in content:
+            if char == '"' and not in_char:
+                in_string = not in_string
+                current_arg += char
+            elif char == "'" and not in_string:
+                in_char = not in_char
+                current_arg += char
+            elif char == ',' and not in_string and not in_char:
+                args.append(current_arg.strip())
+                current_arg = ""
             else:
-                # Fallback: treat as expression
-                return f'printf("%d\\n", {content}); fflush(stdout);'
+                current_arg += char
+        
+        if current_arg:
+            args.append(current_arg.strip())
 
-        # Case 3: Expression or variable - prnt(5 + 5); or prnt(x);
+        # Process each argument
+        format_parts = []
+        c_args = []
+        
+        for arg in args:
+            # String literal
+            if arg.startswith('"') and arg.endswith('"'):
+                format_parts.append("%s")
+                c_args.append(arg)
+            # Char literal
+            elif arg.startswith("'") and arg.endswith("'"):
+                format_parts.append("%c")
+                c_args.append(arg)
+            # Boolean literals
+            elif arg == "tr":
+                format_parts.append("%d")
+                c_args.append("1")
+            elif arg == "fls":
+                format_parts.append("%d")
+                c_args.append("0")
+            # Variable or expression - assume int by default
+            else:
+                # Check if it might be a variable name only (simple heuristic)
+                if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', arg):
+                    # Simple variable name, we could check if it's in a symbol table
+                    format_parts.append("%s")  # Default to string
+                else:
+                    # Expression, default to %d (int)
+                    format_parts.append("%d")
+                c_args.append(arg)
+
+        # Build the printf statement
+        if format_parts:
+            format_str = " ".join(format_parts) + "\\n"
+            return f'printf("{format_str}", {", ".join(c_args)}); fflush(stdout);'
         else:
-            return f'printf("%d\\n", {content}); fflush(stdout);'
+            return 'printf("\\n"); fflush(stdout);'
 
     def _process_input(self, line):
         """Process an input statement"""
@@ -313,6 +405,9 @@ char* conso_concat(const char* str1, const char* str2) {
         # "f (condition) {" -> "if (condition) {"
         if line.startswith('f ('):
             condition = line[line.find('(')+1:line.rfind(')')]
+            # Convert boolean literals in the condition
+            condition = re.sub(r'\btr\b', '1', condition)
+            condition = re.sub(r'\bfls\b', '0', condition)
             return f"if ({condition}) {{"
         return line
 
@@ -321,6 +416,9 @@ char* conso_concat(const char* str1, const char* str2) {
         # "lsf (condition) {" -> "else if (condition) {"
         if line.startswith('lsf ('):
             condition = line[line.find('(')+1:line.rfind(')')]
+            # Convert boolean literals in the condition
+            condition = re.sub(r'\btr\b', '1', condition)
+            condition = re.sub(r'\bfls\b', '0', condition)
             return f"else if ({condition}) {{"
         return line
 
@@ -329,6 +427,9 @@ char* conso_concat(const char* str1, const char* str2) {
         # "whl (condition) {" -> "while (condition) {"
         if line.startswith('whl ('):
             condition = line[line.find('(')+1:line.rfind(')')]
+            # Convert boolean literals in the condition
+            condition = re.sub(r'\btr\b', '1', condition)
+            condition = re.sub(r'\bfls\b', '0', condition)
             return f"while ({condition}) {{"
         return line
 
@@ -337,6 +438,13 @@ char* conso_concat(const char* str1, const char* str2) {
         # "fr (init; condition; update) {" -> "for (init; condition; update) {"
         if line.startswith('fr ('):
             content = line[line.find('(')+1:line.rfind(')')]
+            # Convert boolean literals in the condition part
+            parts = content.split(';')
+            if len(parts) == 3:
+                # Convert boolean literals in the condition (middle part)
+                parts[1] = re.sub(r'\btr\b', '1', parts[1])
+                parts[1] = re.sub(r'\bfls\b', '0', parts[1])
+                content = ';'.join(parts)
             return f"for ({content}) {{"
         return line
 
@@ -345,6 +453,9 @@ char* conso_concat(const char* str1, const char* str2) {
         # "whl (condition);" -> "} while (condition);"
         if line.startswith('whl ('):
             condition = line[line.find('(')+1:line.rfind(')')]
+            # Convert boolean literals in the condition
+            condition = re.sub(r'\btr\b', '1', condition)
+            condition = re.sub(r'\bfls\b', '0', condition)
             if line.endswith(';'):
                 return f"}} while ({condition});"
             else:
@@ -393,6 +504,9 @@ char* conso_concat(const char* str1, const char* str2) {
         # "rtrn value;" -> "return value;"
         if line.startswith('rtrn '):
             value = line[5:].strip()
+            # Handle boolean literals in return values
+            value = re.sub(r'\btr\b', '1', value)
+            value = re.sub(r'\bfls\b', '0', value)
             return f"return {value}"
         elif line == 'rtrn;':
             return "return;"
@@ -433,9 +547,8 @@ char* conso_concat(const char* str1, const char* str2) {
         """Process other statements (assignments, expressions, etc.)"""
         # Process boolean literals
         for key, value in self.bool_mapping.items():
-            line = line.replace(f" {key} ", f" {value} ")
-            line = line.replace(f"({key})", f"({value})")
-            line = line.replace(f"={key};", f"={value};")
+            # Match whole words only to avoid replacing substrings
+            line = re.sub(r'\b' + key + r'\b', value, line)
         
         # Replace remaining Conso keywords with C equivalents
         for key, value in self.keyword_mapping.items():
@@ -535,42 +648,92 @@ def transpile_from_tokens(token_list, symbol_table=None):
         if ttype in transpiler.type_mapping:
             var_type = transpiler.type_mapping[ttype]
             j = i + 1
-            # Expect: id = value ;
-            var_name = None
-            init_expr = []
-            # Find variable name
-            if j < n:
-                ttype2, tvalue2 = get_token_type_value(token_list[j])
-                if ttype2 == "id":
-                    var_name = tvalue2
-                    j += 1
-            # Find '='
-            if j < n:
-                ttype3, tvalue3 = get_token_type_value(token_list[j])
-                if ttype3 == "=":
-                    j += 1
-            # Collect initialization expression until ';'
+            
+            # For collecting multiple declarations of the same type
+            variables = []
+            
+            # Process all variables of this type until semicolon
             while j < n:
-                ttype4, tvalue4 = get_token_type_value(token_list[j])
-                if ttype4 == ";":
+                # Skip to identifier
+                if get_token_type_value(token_list[j])[0] == "id":
+                    var_name = get_token_type_value(token_list[j])[1]
+                    j += 1
+                    
+                    # Check for assignment
+                    if j < n and get_token_type_value(token_list[j])[0] == "=":
+                        j += 1
+                        
+                        # Get the value
+                        value_tokens = []
+                        while j < n:
+                            next_token_type, next_token_value = get_token_type_value(token_list[j])
+                            
+                            # End of this declaration
+                            if next_token_type in [";", ","]:
+                                break
+                                
+                            # Add token to value
+                            value_tokens.append((next_token_type, next_token_value))
+                            j += 1
+                        
+                        # Process the value based on type
+                        processed_value = ""
+                        for val_type, val in value_tokens:
+                            if ttype == "bln" and val_type == "blnlit":
+                                if val == "tr":
+                                    processed_value += "1"
+                                elif val == "fls":
+                                    processed_value += "0"
+                            elif ttype == "strng" and val_type == "strnglit":
+                                processed_value += f'"{val}"'
+                            elif ttype == "chr" and val_type == "chrlit":
+                                processed_value += f"'{val}'"
+                            else:
+                                processed_value += str(val)
+                        
+                        variables.append((var_name, processed_value))
+                    else:
+                        # Just a variable declaration without assignment - add default initialization
+                        if ttype in transpiler.default_values:
+                            default_value = transpiler.default_values[ttype]
+                            variables.append((var_name, default_value))
+                        else:
+                            variables.append((var_name, None))
+
+                    
+                    # Check if there's another declaration (comma)
+                    if j < n and get_token_type_value(token_list[j])[0] == ",":
+                        j += 1
+                        continue
+                
+                # End of declarations for this type
+                if j < n and get_token_type_value(token_list[j])[0] == ";":
+                    j += 1
                     break
-                init_expr.append(str(tvalue4))
+                
                 j += 1
-            # Register in symbol table
-            # No need to register variable in symbol_table; use semantic symbol table
-            # Compose declaration
-            decl = f"{var_type} {var_name}"
-            if init_expr:
-                # For string/char, wrap in quotes if not already
-                if ttype == "strng" and not (init_expr[0].startswith('"') and init_expr[0].endswith('"')):
-                    decl += f' = "{init_expr[0]}"'
-                elif ttype == "chr" and not (init_expr[0].startswith("'") and init_expr[0].endswith("'")):
-                    decl += f" = '{init_expr[0]}'"
+            
+            # Add the declaration line(s)
+            if variables:
+                # For string type, we need to declare each variable separately
+                if ttype == "strng":
+                    for var_name, value in variables:
+                        if value is not None:
+                            output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name} = {value};")
+                        else:
+                            output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name};")
                 else:
-                    decl += " = " + ' '.join(init_expr)
-            decl += ";"
-            output_lines.append(transpiler._indent(indent_level) + decl)
-            i = j + 1
+                    # For other types (nt, dbl, bln, chr), we can use comma-separated declarations
+                    formatted_vars = []
+                    for var_name, value in variables:
+                        if value is not None:
+                            formatted_vars.append(f"{var_name} = {value}")
+                        else:
+                            formatted_vars.append(var_name)
+                    
+                    output_lines.append(transpiler._indent(indent_level) + f"{var_type} {', '.join(formatted_vars)};")
+            
+            i = j
             continue
 
         # Print statement
@@ -588,7 +751,7 @@ def transpile_from_tokens(token_list, symbol_table=None):
             paren_count = 1
             args_tokens = []
             while k < n and paren_count > 0:
-                curr_type, _ = get_token_type_value(token_list[k])
+                curr_type, curr_value = get_token_type_value(token_list[k])
                 if curr_type == "(":
                     paren_count += 1
                 elif curr_type == ")":
@@ -596,20 +759,19 @@ def transpile_from_tokens(token_list, symbol_table=None):
                     if paren_count == 0:
                         break
                 if paren_count > 0:
-                    args_tokens.append(token_list[k])
+                    args_tokens.append((curr_type, curr_value))
                 k += 1
 
             # Split arguments by commas
             arg_groups = []
             curr_arg = []
-            for t in args_tokens:
-                ttype2, tvalue2 = get_token_type_value(t)
-                if ttype2 == ",":
+            for t_type, t_value in args_tokens:
+                if t_type == ",":
                     if curr_arg:
                         arg_groups.append(curr_arg)
                         curr_arg = []
                 else:
-                    curr_arg.append(t)
+                    curr_arg.append((t_type, t_value))
             if curr_arg:
                 arg_groups.append(curr_arg)
 
@@ -619,7 +781,7 @@ def transpile_from_tokens(token_list, symbol_table=None):
             for arg in arg_groups:
                 # Single token: variable or literal
                 if len(arg) == 1:
-                    atype, avalue = get_token_type_value(arg[0])
+                    atype, avalue = arg[0]
                     # Variable: look up type
                     if atype == "id" and symbol_table and symbol_table.lookup(avalue):
                         vtype = symbol_table.lookup(avalue).data_type
@@ -660,10 +822,9 @@ def transpile_from_tokens(token_list, symbol_table=None):
                         arg_exprs.append(str(avalue))
                 else:
                     # Expression: try to infer type (if any operand is dbl, treat as double)
-                    expr_str = ' '.join(str(get_token_type_value(x)[1]) for x in arg)
+                    expr_str = ' '.join(str(val) for _, val in arg)
                     expr_types = set()
-                    for x in arg:
-                        xtype, xvalue = get_token_type_value(x)
+                    for xtype, xvalue in arg:
                         print(f"DEBUG: token in expr: xtype={xtype}, xvalue={xvalue}")  # Debug
                         if xtype == "id":
                             dtype = None
@@ -697,7 +858,19 @@ def transpile_from_tokens(token_list, symbol_table=None):
                     else:
                         format_parts.append("%s")
                     print(f"DEBUG: print expr '{expr_str}' inferred types {expr_types}")  # Debug
+                    
+                    # Convert boolean literals in expressions
+                    for idx, (tok_type, tok_value) in enumerate(arg):
+                        if tok_type == "blnlit":
+                            if tok_value == "tr":
+                                arg[idx] = (tok_type, "1")
+                            elif tok_value == "fls":
+                                arg[idx] = (tok_type, "0")
+                    
+                    # Rebuild expression with converted boolean literals
+                    expr_str = ' '.join(str(val) for _, val in arg)
                     arg_exprs.append(expr_str)
+            
             format_str = " ".join(format_parts) + "\\n"
             output_lines.append(transpiler._indent(indent_level) + f'printf("{format_str}", {", ".join(arg_exprs)}); fflush(stdout);')
             i = k + 1
@@ -710,6 +883,7 @@ def transpile_from_tokens(token_list, symbol_table=None):
         # Opening brace
         if ttype == "{":
             indent_level += 1
+            output_lines.append(transpiler._indent(indent_level - 1) + "{")
             i += 1
             continue
 
@@ -722,16 +896,26 @@ def transpile_from_tokens(token_list, symbol_table=None):
 
         # Other statements (assignments, expressions, etc.)
         if ttype in ["id", "=", "+", "-", "*", "/", "%", "++", "--", "+=", "-=", "*=", "/=", "%=", "==", "!=", "<", "<=", ">", ">=", "tr", "fls", "npt", "cntn", "rtrn"]:
-            stmt_tokens = [str(tvalue)]
-            j = i + 1
+            stmt_tokens = []
+            j = i
             while j < n:
-                ttype2, tvalue2 = get_token_type_value(token_list[j])
-                if ttype2 == ";":
+                curr_type, curr_value = get_token_type_value(token_list[j])
+                if curr_type == ";":
+                    j += 1
                     break
-                stmt_tokens.append(str(tvalue2))
+                    
+                # Convert boolean literals
+                if curr_type == "blnlit" or curr_value in ["tr", "fls"]:
+                    if curr_value == "tr":
+                        stmt_tokens.append("1")
+                    elif curr_value == "fls":
+                        stmt_tokens.append("0")
+                else:
+                    stmt_tokens.append(str(curr_value))
                 j += 1
+                
             output_lines.append(transpiler._indent(indent_level) + ' '.join(stmt_tokens) + ";")
-            i = j + 1
+            i = j
             continue
 
         if ttype == ";":
