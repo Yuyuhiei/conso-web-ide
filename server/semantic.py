@@ -126,22 +126,24 @@ class SemanticAnalyzer:
         self.in_case_block = False  # New flag to track if we're inside a case/default block
 
     def print_symbol_tables(self):
-        """Print all symbol tables in the current scope hierarchy"""
+        """Print all symbol tables in the current scope hierarchy, including function scopes"""
         print("\nSymbol Table Contents:")
         print("=====================")
         
-        # Start with global scope
+        # Print global scope hierarchy
         current = self.current_scope
         scopes = []
-        
-        # Collect all scopes from current to global
         while current:
             scopes.insert(0, current)
             current = current.parent
-        
-        # Print each scope
         for i, scope in enumerate(scopes):
             scope.print_table(indent=i)
+
+        # Print all function scopes (including main)
+        if hasattr(self, "function_scopes"):
+            for func_name, func_scope in self.function_scopes.items():
+                print(f"\n=== Symbol Table: {func_scope.scope_name} ===")
+                func_scope.print_table(indent=1)
             
     def collect_declarations(self):
         """First pass to collect all function and struct declarations"""
