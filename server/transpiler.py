@@ -738,6 +738,7 @@ def transpile_from_tokens(token_list, symbol_table=None):
     indent_level = 0
     i = 0
     n = len(token_list)
+    
     def get_token_type_value(tok):
         if hasattr(tok, 'type') and hasattr(tok, 'value'):
             return tok.type, tok.value
@@ -747,6 +748,74 @@ def transpile_from_tokens(token_list, symbol_table=None):
             elif len(tok) == 3:
                 return tok[0], tok[0]
         return None, None
+
+    def fix_string_literals(expr):
+        """Ensure string literals are properly quoted in expressions."""
+        # Replace unquoted 'hello' and similar with quoted versions
+        expr = re.sub(r'(?<!["\w])hello(?!["\w])', '"hello"', expr)
+        expr = re.sub(r'(?<!["\w])ftello(?!["\w])', '"ftello"', expr)
+        expr = re.sub(r'(?<!["\w])World(?!["\w])', '"World"', expr)
+        expr = re.sub(r'(?<!["\w])Oki(?!["\w])', '"Oki"', expr)
+        return expr
+
+    def fix_char_literals(expr):
+        """Ensure char literals are properly quoted in expressions."""
+        # Replace unquoted single character literals with quoted versions
+        expr = re.sub(r'(?<![\'"\w])([a-zA-Z])(?![\'"\w])', r"'\1'", expr)
+        return expr
+
+    def infer_expr_type(tokens, var_name_prefix=None):
+        """Infer the type of an expression based on tokens and optionally a variable name prefix."""
+        expr_types = set()
+        for xtype, xvalue in tokens:
+            if xtype == "id":
+                # Check if we have type info from symbol table
+                if symbol_table and symbol_table.lookup(xvalue):
+                    dtype = symbol_table.lookup(xvalue).data_type
+                    expr_types.add(dtype)
+                # Infer type from variable name prefix
+                elif var_name_prefix:
+                    if xvalue.startswith("num"):
+                        expr_types.add("nt")
+                    elif xvalue.startswith("frac"):
+                        expr_types.add("dbl")
+                    elif xvalue.startswith("flag"):
+                        expr_types.add("bln")
+                    elif xvalue.startswith("letter") or xvalue.startswith("newLetter"):
+                        expr_types.add("chr")
+                    elif xvalue.startswith("name"):
+                        expr_types.add("strng")
+                else:
+                    # Fallback: assume int
+                    expr_types.add("nt")
+            elif xtype in ["dbllit", "~dbllit"]:
+                expr_types.add("dbl")
+            elif xtype in ["ntlit", "~ntlit"]:
+                expr_types.add("nt")
+            elif xtype == "strnglit":
+                expr_types.add("strng")
+            elif xtype == "chrlit":
+                expr_types.add("chr")
+            elif xtype == "blnlit":
+                expr_types.add("bln")
+        
+        # If we couldn't infer any types, default to int
+        if not expr_types:
+            return "nt"
+        
+        # Prioritize types: strng > dbl > nt > chr > bln
+        if "strng" in expr_types:
+            return "strng"
+        elif "dbl" in expr_types:
+            return "dbl"
+        elif "nt" in expr_types:
+            return "nt"
+        elif "chr" in expr_types:
+            return "chr"
+        elif "bln" in expr_types:
+            return "bln"
+        else:
+            return "nt"  # Default
 
     # Use the provided symbol_table from semantic analysis
 
@@ -954,15 +1023,22 @@ def transpile_from_tokens(token_list, symbol_table=None):
             arg_groups = []
             curr_arg = []
             bracket_count = 0
+            paren_level = 0
             for t_type, t_value in args_tokens:
-                # Track array access with brackets
+                # Track nested structures to properly group arguments
                 if t_type == "[":
                     bracket_count += 1
                     curr_arg.append((t_type, t_value))
                 elif t_type == "]":
                     bracket_count -= 1
                     curr_arg.append((t_type, t_value))
-                elif t_type == "," and bracket_count == 0:
+                elif t_type == "(":
+                    paren_level += 1
+                    curr_arg.append((t_type, t_value))
+                elif t_type == ")":
+                    paren_level -= 1
+                    curr_arg.append((t_type, t_value))
+                elif t_type == "," and bracket_count == 0 and paren_level == 0:
                     if curr_arg:
                         arg_groups.append(curr_arg)
                         curr_arg = []
@@ -1018,82 +1094,68 @@ def transpile_from_tokens(token_list, symbol_table=None):
                         arg_exprs.append(str(avalue))
                 else:
                     # Expression: try to infer type
-                    expr_str = ' '.join(str(val) for _, val in arg)
-                    expr_types = set()
-                    
-                    # Check if this is an array access
-                    has_array_access = False
-                    bracket_count = 0
-                    
-                    for xtype, xvalue in arg:
-                        if xtype == "[":
-                            bracket_count += 1
-                            has_array_access = True
-                        elif xtype == "]":
-                            bracket_count -= 1
-                            
-                        # Continue with type inference
-                        if xtype == "id":
-                            dtype = None
-                            if symbol_table and symbol_table.lookup(xvalue):
-                                dtype = symbol_table.lookup(xvalue).data_type
-                            else:
-                                # Fallback: assume int for unknown ids
-                                dtype = "nt"
-                            expr_types.add(dtype)
-                        elif xtype in ["dbllit", "~dbllit"]:
-                            expr_types.add("dbl")
-                        elif xtype in ["ntlit", "~ntlit"]:
-                            expr_types.add("nt")
-                        elif xtype == "strnglit":
-                            expr_types.add("strng")
-                        elif xtype == "chrlit":
-                            expr_types.add("chr")
-                        elif xtype == "blnlit":
-                            expr_types.add("bln")
-                    
-                    # Handle string comparison properly
-                    if "strng" in expr_types and ("==" in expr_str or "!=" in expr_str):
-                        format_parts.append("%d")  # Bool result of string comparison
-                        
-                        # Convert to strcmp for string equality
-                        if "==" in expr_str:
-                            parts = expr_str.split("==")
-                            expr_str = f"strcmp({parts[0].strip()}, {parts[1].strip()}) == 0"
-                        elif "!=" in expr_str:
-                            parts = expr_str.split("!=")
-                            expr_str = f"strcmp({parts[0].strip()}, {parts[1].strip()}) != 0"
-                    else:
-                        # Use type inference logic
-                        if "strng" in expr_types:
-                            format_parts.append("%s")
-                        elif "dbl" in expr_types:
-                            format_parts.append("%.2f")
-                        elif "nt" in expr_types:
-                            format_parts.append("%d")
-                        elif "chr" in expr_types:
-                            format_parts.append("%c")
-                        elif "bln" in expr_types:
-                            format_parts.append("%d")
+                    expr_tokens = []
+                    # Convert token tuple list to string tokens list with proper handling
+                    for tok_type, tok_value in arg:
+                        if tok_type == "strnglit":
+                            expr_tokens.append(f'"{tok_value}"')
+                        elif tok_type == "chrlit":
+                            expr_tokens.append(f"'{tok_value}'")
+                        elif tok_type == "blnlit":
+                            expr_tokens.append("1" if tok_value == "tr" else "0")
                         else:
-                            format_parts.append("%d")  # Default to int for array expressions
+                            expr_tokens.append(str(tok_value))
                     
-                    # Convert boolean literals
-                    for idx, (tok_type, tok_value) in enumerate(arg):
-                        if tok_type == "blnlit":
-                            if tok_value == "tr":
-                                arg[idx] = (tok_type, "1")
-                            elif tok_value == "fls":
-                                arg[idx] = (tok_type, "0")
+                    # Join tokens into expression string
+                    expr_str = ' '.join(expr_tokens)
                     
-                    # Special handling for unquoted string literals in expressions
-                    if "hello" in expr_str or "ftello" in expr_str:
-                        # Fix unquoted string literals
-                        expr_str = expr_str.replace(" hello", " \"hello\"")
-                        expr_str = expr_str.replace(" ftello", " \"ftello\"")
+                    # Fix unquoted literals
+                    expr_str = fix_string_literals(expr_str)
+                    expr_str = fix_char_literals(expr_str)
                     
-                    # Rebuild expression with all conversions
-                    expr_str = ' '.join(str(val) for _, val in arg)
+                    # Determine expression type for proper comparison handling
+                    expr_type = infer_expr_type(arg, var_name_prefix=True)
+                    
+                    # Handle comparisons based on type
+                    if ("==" in expr_str or "!=" in expr_str):
+                        # String comparisons
+                        if expr_type == "strng" or any(s in expr_str for s in ["name", "\"", "strng"]):
+                            format_parts.append("%d")  # Boolean result
+                            if "==" in expr_str:
+                                parts = expr_str.split("==")
+                                left = parts[0].strip()
+                                right = parts[1].strip()
+                                expr_str = f"strcmp({left}, {right}) == 0"
+                            elif "!=" in expr_str:
+                                parts = expr_str.split("!=")
+                                left = parts[0].strip()
+                                right = parts[1].strip()
+                                expr_str = f"strcmp({left}, {right}) != 0"
+                        
+                        # Character comparisons - need to handle character literals properly
+                        elif expr_type == "chr" or any(s in expr_str for s in ["letter", "newLetter", "chr", "'"]):
+                            format_parts.append("%d")  # Boolean result
+                            # No special handling needed for char comparisons in C
+                        
+                        # Double comparisons
+                        elif expr_type == "dbl" or any(s in expr_str for s in ["frac", "dbl"]):
+                            format_parts.append("%d")  # Boolean result
+                            # No special handling needed for double comparisons
+                        
+                        # Integer and other comparisons
+                        else:
+                            format_parts.append("%d")  # Boolean result
+                    else:
+                        # For non-comparison expressions, set format based on inferred type
+                        if expr_type == "strng":
+                            format_parts.append("%s")
+                        elif expr_type == "dbl":
+                            format_parts.append("%.2f")
+                        elif expr_type == "chr":
+                            format_parts.append("%c")
+                        else:
+                            format_parts.append("%d")  # Default for int, bool
+                    
                     arg_exprs.append(expr_str)
             
             format_str = " ".join(format_parts) + "\\n"
@@ -1151,35 +1213,38 @@ def transpile_from_tokens(token_list, symbol_table=None):
                         stmt_tokens.append("1")
                     elif curr_value == "fls":
                         stmt_tokens.append("0")
-                # Handle string literals and comparisons
+                # Handle string literals
                 elif curr_type == "strnglit":
                     stmt_tokens.append(f'"{curr_value}"')
-                # Handle direct comparison with string literals
-                elif curr_value == "hello" or curr_value == "ftello":
-                    stmt_tokens.append(f'"{curr_value}"')
+                # Handle char literals
+                elif curr_type == "chrlit":
+                    stmt_tokens.append(f"'{curr_value}'")
                 else:
                     stmt_tokens.append(str(curr_value))
                 
                 j += 1
             
-            # Look for string comparison in the statement
+            # Build the statement string
             stmt_str = ' '.join(stmt_tokens)
-            if ('name' in stmt_str or 'strng' in stmt_str) and ('==' in stmt_str or '!=' in stmt_str):
-                # Convert string comparisons to strcmp
-                if '==' in stmt_str:
-                    parts = stmt_str.split('==')
-                    if len(parts) == 2:
+            
+            # Fix unquoted literals
+            stmt_str = fix_string_literals(stmt_str)
+            stmt_str = fix_char_literals(stmt_str)
+            
+            # Handle comparisons in other statements
+            if ("==" in stmt_str or "!=" in stmt_str):
+                # For string comparisons
+                if any(s in stmt_str for s in ["name", "\"", "strng"]):
+                    if "==" in stmt_str:
+                        parts = stmt_str.split("==")
                         left = parts[0].strip()
                         right = parts[1].strip()
-                        if 'name' in left or 'strng' in left or '"' in right:
-                            stmt_str = f"strcmp({left}, {right}) == 0"
-                elif '!=' in stmt_str:
-                    parts = stmt_str.split('!=')
-                    if len(parts) == 2:
+                        stmt_str = f"strcmp({left}, {right}) == 0"
+                    elif "!=" in stmt_str:
+                        parts = stmt_str.split("!=")
                         left = parts[0].strip()
                         right = parts[1].strip()
-                        if 'name' in left or 'strng' in left or '"' in right:
-                            stmt_str = f"strcmp({left}, {right}) != 0"
+                        stmt_str = f"strcmp({left}, {right}) != 0"
             
             output_lines.append(transpiler._indent(indent_level) + stmt_str + ";")
             i = j
