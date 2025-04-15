@@ -1,1460 +1,563 @@
 """
-Conso to C Transpiler
-This module converts Conso code to C code, assuming the input has already passed
-lexical, syntax and semantic analysis.
+Conso to C Transpiler (V6 - Token-Based Sequential)
+This module converts Conso code to C code using a token stream provided
+by earlier compiler phases (Lexer, Parser, Semantic Analyzer).
+Processes top-level blocks sequentially based on tokens.
+Includes default value fix in declaration processing.
 """
 import sys
 import re
 
-class ConsoTranspiler:
-    def __init__(self):
-        # Mapping of Conso types to C types
-        self.type_mapping = {
-            "nt": "int",
-            "dbl": "double",
-            "strng": "char*",
-            "bln": "int",  # boolean values in C are integers
-            "chr": "char",
-            "vd": "void", 
-            "dfstrct": "struct"  # struct instantiation
-        }
-        
-        # Mapping of Conso keywords to C equivalents
-        self.keyword_mapping = {
-            "f": "if",
-            "ls": "else",
-            "lsf": "else if",
-            "whl": "while",
-            "fr": "for",
-            "d": "do",
-            "swtch": "switch",
-            "cs": "case",
-            "dflt": "default",
-            "brk": "break",
-            "rtrn": "return",
-            "cntn": "continue"
-        }
-        
-        # Boolean literals
-        self.bool_mapping = {
-            "tr": "1",
-            "fls": "0"
-        }
-
-        # Default values for uninitialized variables
-        self.default_values = {
-            "nt": "0",
-            "dbl": "0.00",
-            "strng": "\"\"",
-            "bln": "0",  # false
-            "chr": "'/'"
-        }
-
-
-    def transpile(self, conso_code):
-        """
-        Transpile Conso code to C code.
-        Assumes the input code has already passed lexical, syntax, and semantic validation.
-        """
-        print("DEBUG: Input to transpile():")
-        print(conso_code)
-        # Add standard headers
-        c_code = self._generate_headers()
-        
-        # Add helper functions
-        c_code += self._generate_helper_functions()
-        
-        # Process each line and convert to C
-        processed_lines = []
-        in_function = False
-        indent_level = 0
-        
-        # First pass - find struct definitions and process them
-        lines = conso_code.split('\n')
-        i = 0
-        while i < len(lines):
-            line = lines[i].strip()
-            
-            # Process struct definitions first to place them at file scope
-            if line.startswith('strct '):
-                processed_line, struct_lines = self._process_struct(lines, i)
-                if processed_line:
-                    processed_lines.append(processed_line)
-                    # Process struct body lines
-                    bracket_count = 1  # Initialize bracket_count to track nesting
-                    for j in range(1, struct_lines + 1):
-                        if i + j < len(lines):
-                            struct_line = lines[i + j].strip()
-                            if '{' in struct_line:
-                                bracket_count += struct_line.count('{')
-                            if '}' in struct_line:
-                                bracket_count -= struct_line.count('}')
-                            
-                            if struct_line:
-                                processed_lines.append("    " + struct_line)
-                i += struct_lines + 1
-            else:
-                i += 1
-
-        # Second pass - process everything else
-        i = 0
-        # DEBUG: Print all lines before second pass
-        print("DEBUG: Lines before second pass:")
-        for idx, l in enumerate(lines):
-            print(f"{idx}: '{l}'")
-        while i < len(lines):
-            line = lines[i].strip()
-            
-            # Skip empty lines
-            if not line:
-                i += 1
-                continue
-
-            # Skip lines that are just variable names (e.g., struct2;) to avoid duplicate/erroneous struct declarations
-            if re.match(r'^\w+\s*;$', line):
-                i += 1
-                continue
-
-            # Skip struct definitions (already processed)
-            if line.startswith('strct '):
-                bracket_count = 1  # Initialize bracket_count
-                i += 1
-                while i < len(lines) and bracket_count > 0:
-                    if i < len(lines):
-                        curr_line = lines[i].strip()
-                        if '{' in curr_line:
-                            bracket_count += curr_line.count('{')
-                        if '}' in curr_line:
-                            bracket_count -= curr_line.count('}')
-                        i += 1
-                continue
-            
-            processed_line = ""
-            
-            # Handle main function
-            if line.lstrip().startswith('mn('):
-                in_function = True
-                processed_line = "int main(int argc, char *argv[]) {"
-                indent_level = 1
-
-            # Handle end statement (return from main)
-            elif line.lstrip().startswith('end;'):
-                processed_line = self._indent(indent_level) + "return 0;"
-                indent_level = 0
-                in_function = False
-
-            # Handle variable declarations
-            elif any(line.lstrip().startswith(t + " ") for t in self.type_mapping):
-                processed_line = self._process_declaration(line)
-
-            # Handle struct instantiation
-            elif line.lstrip().startswith('dfstrct '):
-                processed_line = self._process_dfstrct(line)
-
-            # Handle print statements
-            elif line.lstrip().startswith('prnt('):
-                processed_line = self._process_print(line)
-
-            # Handle input statements
-            elif line.lstrip().startswith('npt(') or 'npt(' in line:
-                processed_line = self._process_input(line)
-
-            # Handle if statements
-            elif line.lstrip().startswith('f ('):
-                processed_line = self._process_if_statement(line)
-                indent_level += 1
-
-            # Handle else if statements
-            elif line.lstrip().startswith('lsf ('):
-                indent_level -= 1  # Reduce indent for else if
-                processed_line = self._process_else_if_statement(line)
-                indent_level += 1  # Increase indent after else if
-
-            # Handle else statements
-            elif line.lstrip().startswith('ls {'):
-                indent_level -= 1  # Reduce indent for else
-                processed_line = self._indent(indent_level) + "else {"
-                indent_level += 1  # Increase indent after else
-
-            # Handle while loops
-            elif line.lstrip().startswith('whl ('):
-                processed_line = self._process_while_loop(line)
-                indent_level += 1
-
-            # Handle for loops
-            elif line.lstrip().startswith('fr ('):
-                processed_line = self._process_for_loop(line)
-                indent_level += 1
-
-            # Handle do-while loops
-            elif line.lstrip().startswith('d {'):
-                processed_line = self._indent(indent_level) + "do {"
-                indent_level += 1
-
-            # Handle the "while" part of do-while
-            elif line.lstrip().startswith('whl (') and i > 0 and lines[i-1].strip() == '}':
-                # This is part of a do-while loop
-                indent_level -= 1  # Reduce indent for the while condition
-                processed_line = self._process_do_while_condition(line)
-
-            # Handle switch statements
-            elif line.lstrip().startswith('swtch ('):
-                processed_line = self._process_switch(line)
-                indent_level += 1
-
-            # Handle case statements
-            elif line.lstrip().startswith('cs '):
-                processed_line = self._process_case(line)
-
-            # Handle default case
-            elif line.lstrip().startswith('dflt:'):
-                processed_line = self._indent(indent_level) + "default:"
-
-            # Handle functions
-            elif line.lstrip().startswith('fnctn '):
-                processed_line = self._process_function(line)
-                in_function = True
-                indent_level = 1
-
-            # Handle return statements
-            elif line.lstrip().startswith('rtrn '):
-                processed_line = self._process_return(line)
-
-            # Handle struct declarations
-            elif line.lstrip().startswith('strct '):
-                processed_line, struct_lines = self._process_struct(lines, i)
-                i += struct_lines  # Skip the processed struct lines
-
-            # Handle struct instantiation
-            elif line.lstrip().startswith('dfstrct '):
-                processed_line = self._process_dfstrct(line)
-
-            # Handle closing braces - decrease indent level
-            elif line.strip() == '}':
-                indent_level -= 1
-                processed_line = self._indent(indent_level) + "}"
-                if indent_level == 0:
-                    in_function = False
-
-            # Handle other statements (assignments, expressions, etc.)
-            else:
-                processed_line = self._process_other_statement(line)
-
-            # Debug: print the original and processed line
-            print(f"Transpiler: original='{line}' processed='{processed_line}'")
-
-            # Add proper indentation to the processed line
-            if processed_line and not processed_line.startswith(' ') and not processed_line.startswith('\t'):
-                processed_line = self._indent(indent_level) + processed_line
-
-            # Add the processed line to our result
-            if processed_line:
-                processed_lines.append(processed_line)
-            
-            i += 1
-        
-        # Join all processed lines and return the C code
-        c_code += '\n'.join(processed_lines)
-        
-        return c_code
-
-    def _indent(self, level):
-        """Helper function to add proper indentation"""
-        return "    " * level
-
-    def _generate_headers(self):
-        """Generate the necessary C headers"""
-        return (
-            "#include <stdio.h>\n"
-            "#include <stdlib.h>\n"
-            "#include <string.h>\n"
-            "\n"
-        )
-
-    def _generate_helper_functions(self):
-        """Generate helper functions for Conso-specific operations"""
-        return """// Helper function for string input
-char* conso_input(const char* prompt) {
-    printf("%s", prompt);
-    char* buffer = malloc(1024);
-    if (buffer == NULL) {
-        fprintf(stderr, "Memory allocation failed\\n");
-        exit(1);
-    }
-    fgets(buffer, 1024, stdin);
-    // Remove newline character if present
-    size_t len = strlen(buffer);
-    if (len > 0 && buffer[len-1] == '\\n') {
-        buffer[len-1] = '\\0';
-    }
-    return buffer;
-}
-
-// Helper function for string concatenation
-char* conso_concat(const char* str1, const char* str2) {
-    if (str1 == NULL) str1 = "";
-    if (str2 == NULL) str2 = "";
-    size_t len1 = strlen(str1);
-    size_t len2 = strlen(str2);
-    char* result = malloc(len1 + len2 + 1);
-    if (result == NULL) {
-        fprintf(stderr, "Memory allocation failed\\n");
-        exit(1);
-    }
-    strcpy(result, str1);
-    strcat(result, str2);
-    return result;
-}
-
-"""
-
-    def _process_declaration(self, line):
-        """
-        Process a variable declaration statement with proper array handling.
-        """
-        parts = line.split(' ', 1)
-        if len(parts) < 2:
-            return line  # Not enough parts, return unchanged
-
-        conso_type = parts[0]
-        rest = parts[1].rstrip(';')  # Remove trailing semicolon for processing
-
-        if conso_type in self.type_mapping:
-            c_type = self.type_mapping[conso_type]
-            # Split by commas for multiple declarations
-            decls = [d.strip() for d in rest.split(',')]
-            
-            # Process each declaration
-            processed_declarations = []
-            
-            for decl in decls:
-                # Check if this is an array declaration by looking for '[' but not in a string
-                array_match = re.search(r'(\w+)(\s*\[\s*\d+\s*\])+', decl)
-                is_array = array_match is not None
-                
-                if is_array:
-                    # This is an array declaration
-                    var_name = array_match.group(1)
-                    # Extract dimensions part (everything from first [ to last ])
-                    dimensions_start = decl.find('[')
-                    
-                    # Find the position after the variable name and dimensions
-                    if '=' in decl:
-                        dimensions_end = decl.find('=')
-                        init_part = decl[dimensions_end:].strip()
-                    else:
-                        dimensions_end = len(decl)
-                        init_part = ""
-                    
-                    dimensions = decl[dimensions_start:dimensions_end].strip()
-                    
-                    # Handle initialization if present
-                    if init_part:
-                        if conso_type == "bln":
-                            # Replace boolean literals
-                            init_part = re.sub(r'\btr\b', self.bool_mapping['tr'], init_part)
-                            init_part = re.sub(r'\bfls\b', self.bool_mapping['fls'], init_part)
-                        
-                        # For string arrays, handle each element
-                        if conso_type == "strng":
-                            processed_declarations.append(f"{c_type} {var_name}{dimensions}{init_part};")
-                        else:
-                            processed_declarations.append(f"{c_type} {var_name}{dimensions}{init_part};")
-                    else:
-                        # Array without initialization
-                        if conso_type == "strng":
-                            processed_declarations.append(f"{c_type} {var_name}{dimensions};")
-                        else:
-                            # Default initialization with zeros
-                            processed_declarations.append(f"{c_type} {var_name}{dimensions} = {{0}};")
-                else:
-                    # Regular variable (not an array)
-                    if conso_type == "strng":
-                        # Handle string variables separately
-                        if '=' in decl:
-                            var, val = [x.strip() for x in decl.split('=', 1)]
-                            # Handle string literals
-                            if not (val.startswith('"') and val.endswith('"')):
-                                if not val.startswith('"'):
-                                    val = f'"{val}'
-                                if not val.endswith('"'):
-                                    val = f'{val}"'
-                            processed_declarations.append(f"{c_type} {var} = {val};")
-                        else:
-                            # Add default initialization for strings
-                            processed_declarations.append(f"{c_type} {decl} = {self.default_values[conso_type]};")
-                    else:
-                        # Handle regular variables for other types
-                        if '=' in decl:
-                            var, val = [x.strip() for x in decl.split('=', 1)]
-                            
-                            # Handle char literals
-                            if conso_type == "chr" and not (val.startswith("'") and val.endswith("'")):
-                                if not val.startswith("'"):
-                                    val = f"'{val}"
-                                if not val.endswith("'"):
-                                    val = f"{val}'"
-                            
-                            # For bln, map tr/fls to 1/0 using regex for whole word replacement
-                            elif conso_type == "bln":
-                                val = re.sub(r'\btr\b', self.bool_mapping['tr'], val)
-                                val = re.sub(r'\bfls\b', self.bool_mapping['fls'], val)
-                            
-                            processed_declarations.append(f"{c_type} {var} = {val};")
-                        else:
-                            # Add default initialization
-                            processed_declarations.append(f"{c_type} {decl} = {self.default_values[conso_type]};")
-            
-            # Return all processed declarations
-            return "\n".join(processed_declarations)
-        
-        return line  # Type not found, return unchanged
-
-    def _process_print(self, line):
-        """Process a print statement with support for array elements and string comparisons"""
-        # Remove trailing semicolon if present for parsing
-        if line.endswith(';'):
-            line = line[:-1]
-        # Extract the content inside the parentheses
-        content = line[line.find('(')+1:line.rfind(')')].strip()
-
-        # If empty print statement
-        if not content:
-            return 'printf("\\n"); fflush(stdout);'
-
-        # Replace string literals comparison - when hello is not in quotes
-        # hello variable issue - convert to string comparison
-        content = re.sub(r'(?<!["\w])(\w+)(?!["\w])', lambda m: f'"{m.group(1)}"' if m.group(1) in ['hello', 'ftello'] else m.group(1), content)
-
-        # Split the arguments by commas, handling string literals with commas
-        args = []
-        current_arg = ""
-        in_string = False
-        in_char = False
-        paren_level = 0
-        brace_level = 0  # For array initializers { }
-        bracket_level = 0  # For array indices [ ]
-        
-        for char in content:
-            if char == '"' and not in_char:
-                in_string = not in_string
-                current_arg += char
-            elif char == "'" and not in_string:
-                in_char = not in_char
-                current_arg += char
-            elif char == '(' and not in_string and not in_char:
-                paren_level += 1
-                current_arg += char
-            elif char == ')' and not in_string and not in_char:
-                paren_level -= 1
-                current_arg += char
-            elif char == '{' and not in_string and not in_char:
-                brace_level += 1
-                current_arg += char
-            elif char == '}' and not in_string and not in_char:
-                brace_level -= 1
-                current_arg += char
-            elif char == '[' and not in_string and not in_char:
-                bracket_level += 1
-                current_arg += char
-            elif char == ']' and not in_string and not in_char:
-                bracket_level -= 1
-                current_arg += char
-            elif char == ',' and not in_string and not in_char and paren_level == 0 and brace_level == 0 and bracket_level == 0:
-                args.append(current_arg.strip())
-                current_arg = ""
-            else:
-                current_arg += char
-        
-        if current_arg:
-            args.append(current_arg.strip())
-
-        # Process each argument
-        format_parts = []
-        c_args = []
-        
-        for arg in args:
-            # String literal
-            if arg.startswith('"') and arg.endswith('"'):
-                format_parts.append("%s")
-                c_args.append(arg)
-            # Char literal
-            elif arg.startswith("'") and arg.endswith("'"):
-                format_parts.append("%c")
-                c_args.append(arg)
-            # Boolean literals
-            elif arg == "tr":
-                format_parts.append("%d")
-                c_args.append("1")
-            elif arg == "fls":
-                format_parts.append("%d")
-                c_args.append("0")
-            # Array access or complex expression - checking for array syntax
-            elif '[' in arg and ']' in arg:
-                # Replace boolean literals
-                arg = re.sub(r'\btr\b', '1', arg)
-                arg = re.sub(r'\bfls\b', '0', arg)
-                
-                # If comparing strings, use %d format with strcmp
-                if '==' in arg or '!=' in arg:
-                    if 'name' in arg or 'strng' in arg:
-                        format_parts.append("%d")
-                        # For string equality, we need to use strcmp
-                        if '==' in arg:
-                            parts = arg.split('==')
-                            arg = f"strcmp({parts[0].strip()}, {parts[1].strip()}) == 0"
-                        elif '!=' in arg:
-                            parts = arg.split('!=')
-                            arg = f"strcmp({parts[0].strip()}, {parts[1].strip()}) != 0"
-                    else:
-                        # Default to %d for all other expressions
-                        format_parts.append("%d")
-                else:
-                    # Handle other array expressions, guessing the type based on variables
-                    if 'dbl' in arg or 'frac' in arg:
-                        format_parts.append("%.2f")
-                    elif 'chr' in arg or 'letter' in arg:
-                        format_parts.append("%c")
-                    else:
-                        format_parts.append("%d")
-                
-                c_args.append(arg)
-            # Variable or expression - attempt to determine type
-            else:
-                # If comparing strings, use %d format with strcmp
-                if '==' in arg or '!=' in arg:
-                    if 'name' in arg or 'strng' in arg or '"' in arg:
-                        format_parts.append("%d")
-                        # For string equality, we need to use strcmp
-                        if '==' in arg:
-                            parts = arg.split('==')
-                            arg = f"strcmp({parts[0].strip()}, {parts[1].strip()}) == 0"
-                        elif '!=' in arg:
-                            parts = arg.split('!=')
-                            arg = f"strcmp({parts[0].strip()}, {parts[1].strip()}) != 0"
-                    else:
-                        # Default to %d for other comparisons
-                        format_parts.append("%d")
-                else:
-                    # For other expressions, try to guess type
-                    if 'dbl' in arg or 'frac' in arg:
-                        format_parts.append("%.2f")
-                    elif 'chr' in arg or 'letter' in arg:
-                        format_parts.append("%c")
-                    else:
-                        format_parts.append("%d")
-                
-                # Replace boolean literals
-                arg = re.sub(r'\btr\b', '1', arg)
-                arg = re.sub(r'\bfls\b', '0', arg)
-                c_args.append(arg)
-
-        # Build the printf statement
-        if format_parts:
-            format_str = " ".join(format_parts) + "\\n"
-            return f'printf("{format_str}", {", ".join(c_args)}); fflush(stdout);'
-        else:
-            return 'printf("\\n"); fflush(stdout);'
-
-    def _process_input(self, line):
-        """Process an input statement"""
-        # Handle input statements
-        if line.startswith('npt('):
-            # Standalone input function call: npt("Enter value: ");
-            content = line[line.find('(')+1:line.rfind(')')]
-            return f"conso_input({content});"
-        elif '=' in line and 'npt(' in line:
-            # Assignment with input: var = npt("Enter value: ");
-            var_name, input_call = line.split('=', 1)
-            var_name = var_name.strip()
-            input_call = input_call.strip()
-            if input_call.startswith('npt('):
-                content = input_call[input_call.find('(')+1:input_call.rfind(')')]
-                return f"{var_name} = conso_input({content});"
-        
-        return line  # Not recognized, return unchanged
-
-    def _process_if_statement(self, line):
-        """Process an if statement"""
-        # "f (condition) {" -> "if (condition) {"
-        if line.startswith('f ('):
-            condition = line[line.find('(')+1:line.rfind(')')]
-            # Convert boolean literals in the condition
-            condition = re.sub(r'\btr\b', '1', condition)
-            condition = re.sub(r'\bfls\b', '0', condition)
-            return f"if ({condition}) {{"
-        return line
-
-    def _process_else_if_statement(self, line):
-        """Process an else-if statement"""
-        # "lsf (condition) {" -> "else if (condition) {"
-        if line.startswith('lsf ('):
-            condition = line[line.find('(')+1:line.rfind(')')]
-            # Convert boolean literals in the condition
-            condition = re.sub(r'\btr\b', '1', condition)
-            condition = re.sub(r'\bfls\b', '0', condition)
-            return f"else if ({condition}) {{"
-        return line
-
-    def _process_while_loop(self, line):
-        """Process a while loop"""
-        # "whl (condition) {" -> "while (condition) {"
-        if line.startswith('whl ('):
-            condition = line[line.find('(')+1:line.rfind(')')]
-            # Convert boolean literals in the condition
-            condition = re.sub(r'\btr\b', '1', condition)
-            condition = re.sub(r'\bfls\b', '0', condition)
-            return f"while ({condition}) {{"
-        return line
-
-    def _process_for_loop(self, line):
-        """Process a for loop"""
-        # "fr (init; condition; update) {" -> "for (init; condition; update) {"
-        if line.startswith('fr ('):
-            content = line[line.find('(')+1:line.rfind(')')]
-            # Convert boolean literals in the condition part
-            parts = content.split(';')
-            if len(parts) == 3:
-                # Convert boolean literals in the condition (middle part)
-                parts[1] = re.sub(r'\btr\b', '1', parts[1])
-                parts[1] = re.sub(r'\bfls\b', '0', parts[1])
-                content = ';'.join(parts)
-            return f"for ({content}) {{"
-        return line
-
-    def _process_do_while_condition(self, line):
-        """Process the condition part of a do-while loop"""
-        # "whl (condition);" -> "} while (condition);"
-        if line.startswith('whl ('):
-            condition = line[line.find('(')+1:line.rfind(')')]
-            # Convert boolean literals in the condition
-            condition = re.sub(r'\btr\b', '1', condition)
-            condition = re.sub(r'\bfls\b', '0', condition)
-            if line.endswith(';'):
-                return f"}} while ({condition});"
-            else:
-                return f"}} while ({condition})"
-        return line
-
-    def _process_switch(self, line):
-        """Process a switch statement"""
-        # "swtch (expression) {" -> "switch (expression) {"
-        if line.startswith('swtch ('):
-            expression = line[line.find('(')+1:line.rfind(')')]
-            return f"switch ({expression}) {{"
-        return line
-
-    def _process_case(self, line):
-        """Process a case statement in a switch"""
-        # "cs value:" -> "case value:"
-        if line.startswith('cs '):
-            value = line[3:].strip()
-            if value.endswith(':'):
-                value = value[:-1].strip()
-            return f"case {value}:"
-        return line
-
-    def _process_function(self, line):
-        """Process a function declaration"""
-        # "fnctn vd myFunc()" -> "void myFunc()"
-        if line.startswith('fnctn '):
-            parts = line[6:].strip().split(' ', 1)
-            if len(parts) == 2:
-                return_type = parts[0]
-                func_sig = parts[1]
-                
-                if return_type in self.type_mapping:
-                    c_type = self.type_mapping[return_type]
-                    if func_sig.endswith('{'):
-                        func_sig = func_sig[:-1].strip() + " {"
-                    return f"{c_type} {func_sig}"
-            
-            # Fall back - just remove "fnctn "
-            return line[6:]
-        return line
-
-    def _process_return(self, line):
-        """Process a return statement"""
-        # "rtrn value;" -> "return value;"
-        if line.startswith('rtrn '):
-            value = line[5:].strip()
-            # Handle boolean literals in return values
-            value = re.sub(r'\btr\b', '1', value)
-            value = re.sub(r'\bfls\b', '0', value)
-            return f"return {value}"
-        elif line == 'rtrn;':
-            return "return;"
-        return line
-
-    def _process_struct(self, lines, start_index):
-        """Process a struct declaration without modifying the original lines list."""
-        line = lines[start_index].strip()
-        processed_lines = []
-        struct_lines = 0
-
-        if line.startswith('strct '):
-            struct_name = line[6:line.find('{')].strip()
-            processed_lines.append(f"typedef struct {struct_name} {{")
-            
-            # Count the lines in the struct body
-            bracket_count = 1
-            for i in range(start_index + 1, len(lines)):
-                struct_lines += 1
-                curr_line = lines[i].strip()
-                
-                # Process member declarations (convert Conso types to C types)
-                if any(curr_line.startswith(t + " ") for t in self.type_mapping):
-                    parts = curr_line.split(' ', 1)
-                    member_type = parts[0]
-                    if member_type in self.type_mapping:
-                        c_type = self.type_mapping[member_type]
-                        curr_line = curr_line.replace(member_type + " ", c_type + " ", 1)
-                
-                # Add the processed member line (unless it's just a closing brace)
-                if curr_line not in ('};', '}'):
-                    if curr_line:
-                        processed_lines.append("    " + curr_line)
-                
-                if '{' in curr_line:
-                    bracket_count += curr_line.count('{')
-                if '}' in curr_line:
-                    bracket_count -= curr_line.count('}')
-                
-                if bracket_count == 0:
-                    # Found the end of the struct
-                    processed_lines.append(f"}} {struct_name};")
-                    break
-
-        # Join all processed struct lines into a single string
-        return "\n".join(processed_lines), struct_lines
-     
-    def _process_dfstrct(self, line):
-        """Process a struct instantiation statement (dfstrct) to C typedef style."""
-        if not line.lstrip().startswith('dfstrct '):
-            return line
-
-        # Remove 'dfstrct ' and trailing semicolon
-        remaining = line.lstrip()[8:].strip()
-        if remaining.endswith(';'):
-            remaining = remaining[:-1]
-
-        # Normalize whitespace (handle tabs, multiple spaces)
-        remaining = re.sub(r'\s+', ' ', remaining).strip()
-
-        # Split into struct type and variable list
-        parts = remaining.split(' ', 1)
-        if len(parts) != 2:
-            # If parsing fails, return a comment for debugging
-            return f"/* dfstrct parse error: '{line}' */"
-
-        struct_type = parts[0].strip()
-        vars_list = parts[1].strip()
-
-        # Debug: print(f"dfstrct: struct_type='{struct_type}', vars_list='{vars_list}'")
-
-        # Use typedef style: myStruct struct1, struct2;
-        return f"{struct_type} {vars_list};"
-
-    def _process_other_statement(self, line):
-        """Process other statements (assignments, expressions, etc.)"""
-        # Process boolean literals
-        for key, value in self.bool_mapping.items():
-            # Match whole words only to avoid replacing substrings
-            line = re.sub(r'\b' + key + r'\b', value, line)
-        
-        # Replace remaining Conso keywords with C equivalents
-        for key, value in self.keyword_mapping.items():
-            if key + " " in line or key + "(" in line:
-                line = line.replace(key + " ", value + " ")
-                line = line.replace(key + "(", value + "(")
-        
-        # Handle string comparisons (== and !=)
-        if ('name' in line or 'strng' in line) and ('"' in line or "'" in line):
-            if '==' in line:
-                # Split at the equality operator
-                parts = line.split('==')
-                if len(parts) == 2:  # Simple comparison
-                    left = parts[0].strip()
-                    right = parts[1].strip()
-                    if ('"' in right or "'" in right) or ('name' in left or 'strng' in left):
-                        # Replace with strcmp
-                        line = f"strcmp({left}, {right}) == 0"
-            elif '!=' in line:
-                # Split at the inequality operator
-                parts = line.split('!=')
-                if len(parts) == 2:  # Simple comparison
-                    left = parts[0].strip()
-                    right = parts[1].strip()
-                    if ('"' in right or "'" in right) or ('name' in left or 'strng' in left):
-                        # Replace with strcmp
-                        line = f"strcmp({left}, {right}) != 0"
-        
-        # Add parentheses around string literals to ensure proper syntax
-        line = re.sub(r'(?<!["\w])(\w+)(?!["\w])', lambda m: f'"{m.group(1)}"' if m.group(1) in ['hello', 'ftello'] else m.group(1), line)
-        
-        return line
-
-# Create a TranspilerError class for error handling
+# --- Custom Exception Class ---
 class TranspilerError(Exception):
-    def __init__(self, message, line=None, column=None):
-        super().__init__(message)
+    """Custom exception for errors during the transpilation process."""
+    def __init__(self, message, line_num=None):
         self.message = message
-        self.line = line
-        self.column = column
+        self.line_num = line_num
+        super().__init__(self.message)
 
     def __str__(self):
-        if self.line is not None and self.column is not None:
-            return f"Transpiler Error at line {self.line}, column {self.column}: {self.message}"
-        return f"Transpiler Error: {self.message}"
+        if self.line_num is not None:
+            return f"Transpiler Error at line {self.line_num}: {self.message}"
+        else:
+            return f"Transpiler Error: {self.message}"
 
-# Function to transpile Conso code to C
+# --- Transpiler Class ---
+class ConsoTranspilerTokenBased:
+    def __init__(self, token_list, symbol_table=None):
+        self.tokens = token_list
+        self.symbol_table = symbol_table # Store symbol table if provided
+        self.current_pos = 0
+        self.output_parts = []
+        self.current_indent_level = 0
+
+        # Mappings (same as before)
+        self.type_mapping = {
+            "nt": "int", "dbl": "double", "strng": "char*",
+            "bln": "int", "chr": "char", "vd": "void",
+            "dfstrct": "struct"
+        }
+        self.keyword_mapping = {
+            "f": "if", "ls": "else", "lsf": "else if", "whl": "while",
+            "fr": "for", "d": "do", "swtch": "switch", "cs": "case",
+            "dflt": "default", "brk": "break", "cntn": "continue"
+        }
+        self.bool_mapping = {"tr": "1", "fls": "0"}
+        self.default_values = {
+            "nt": "0", "dbl": "0.0", "strng": "NULL",
+            "bln": "0", "chr": "'\\0'"
+        }
+
+    # --- Token Helpers ---
+    def _peek(self, offset=0):
+        """Look at the token at the current position + offset without consuming."""
+        peek_pos = self.current_pos + offset
+        if 0 <= peek_pos < len(self.tokens):
+            token = self.tokens[peek_pos]
+            if isinstance(token, tuple) and len(token) > 0: return token[0]
+            elif hasattr(token, 'type'): return token.type
+        return None
+
+    def _consume(self, expected_type=None, expected_value=None):
+        """Consume the current token, optionally checking its type/value."""
+        if self.current_pos < len(self.tokens):
+            token = self.tokens[self.current_pos]
+            token_type, token_value = None, None
+            if isinstance(token, tuple) and len(token) >= 2: token_type, token_value = token[0], token[1]
+            elif hasattr(token, 'type') and hasattr(token, 'value'): token_type, token_value = token.type, token.value
+            line = token[2] if isinstance(token, tuple) and len(token)>2 else '?'
+            if expected_type and token_type != expected_type: raise TranspilerError(f"Expected token type '{expected_type}' but got '{token_type}'", line)
+            if expected_value and token_value != expected_value: raise TranspilerError(f"Expected token value '{expected_value}' but got '{token_value}'", line)
+            self.current_pos += 1
+            return token_type, token_value, token
+        raise TranspilerError("Unexpected end of token stream")
+
+    def _skip_token(self, count=1):
+        """Advance the current position."""
+        self.current_pos += count
+
+    # --- Core Transpilation Method ---
+    def transpile(self):
+        """Transpile the token stream sequentially."""
+        self.output_parts = [
+            self._generate_headers(),
+            self._generate_helper_functions()
+        ]
+        while self.current_pos < len(self.tokens):
+            token_type = self._peek()
+            if token_type == "EOF": break
+            if token_type == 'strct':
+                struct_def_c = self._process_struct_definition_from_tokens()
+                if struct_def_c: self.output_parts.extend(["// Struct Definition", struct_def_c, ""])
+            elif token_type == 'fnctn':
+                func_def_c = self._process_function_definition_from_tokens()
+                if func_def_c: self.output_parts.extend(["// Function Definition", func_def_c, ""])
+            elif token_type == 'mn':
+                main_def_c = self._process_main_definition_from_tokens()
+                if main_def_c: self.output_parts.extend(["// Main Function", main_def_c, ""])
+            else:
+                line = self.tokens[self.current_pos][2] if isinstance(self.tokens[self.current_pos], tuple) and len(self.tokens[self.current_pos])>2 else '?'
+                print(f"Warning: Ignoring unexpected top-level token '{token_type}' at line {line}")
+                self._skip_token()
+        return "\n".join(self.output_parts)
+
+    # --- Token-Based Definition Processors ---
+    def _process_struct_definition_from_tokens(self):
+        """Processes struct definition from tokens."""
+        try:
+            self._consume('strct')
+            _, struct_name, _ = self._consume('id')
+            self._consume('{')
+            definition_lines = [f"typedef struct {struct_name} {{"]
+            indent = "    "
+            while self._peek() != '}':
+                if self._peek() == "EOF": raise TranspilerError("Unexpected EOF inside struct definition")
+                member_line = self._process_statement_from_tokens(is_struct_member=True)
+                if member_line: definition_lines.append(indent + member_line)
+            self._consume('}')
+            if self._peek() == ';': self._consume(';')
+            definition_lines.append(f"}} {struct_name};")
+            return "\n".join(definition_lines)
+        except TranspilerError as e:
+            print(f"Error processing struct: {e}")
+            # Attempt to recover by skipping tokens until likely end? Difficult.
+            # For now, return None to indicate failure.
+            return None
+
+    def _process_function_definition_from_tokens(self):
+        """Processes function definition from tokens."""
+        try:
+            self._consume('fnctn')
+            type_token = self._consume()
+            return_type_conso = type_token[0]
+            c_return_type = self.type_mapping.get(return_type_conso, return_type_conso)
+            _, func_name, _ = self._consume('id')
+            self._consume('(')
+            params_c = self._process_parameters_from_tokens()
+            self._consume(')')
+            self._consume('{')
+            definition_lines = [f"{c_return_type} {func_name}({params_c}) {{"]
+            self.current_indent_level = 1
+            while self._peek() != '}':
+                if self._peek() == "EOF": raise TranspilerError("Unexpected EOF inside function definition")
+                statement_c = self._process_statement_from_tokens()
+                if statement_c:
+                    indent_level = self.current_indent_level
+                    if statement_c.startswith('}'): indent_level = max(0, indent_level - 1)
+                    definition_lines.append(self._indent(indent_level) + statement_c)
+                    if statement_c.endswith('{'): self.current_indent_level += 1
+                    if statement_c.startswith('}'): self.current_indent_level = max(0, self.current_indent_level -1)
+            self._consume('}')
+            self.current_indent_level = 0
+            definition_lines.append("}")
+            return "\n".join(definition_lines)
+        except TranspilerError as e:
+            print(f"Error processing function '{func_name}': {e}")
+            return None # Indicate failure
+
+
+    def _process_main_definition_from_tokens(self):
+        """Processes main function definition from tokens."""
+        try:
+            self._consume('mn')
+            self._consume('(')
+            self._consume(')')
+            self._consume('{')
+            definition_lines = ["int main(int argc, char *argv[]) {"]
+            self.current_indent_level = 1
+            while self._peek() != 'end':
+                if self._peek() == "EOF": raise TranspilerError("Unexpected EOF inside main definition")
+                statement_c = self._process_statement_from_tokens()
+                if statement_c:
+                    indent_level = self.current_indent_level
+                    if statement_c.startswith('}'): indent_level = max(0, indent_level - 1)
+                    definition_lines.append(self._indent(indent_level) + statement_c)
+                    if statement_c.endswith('{'): self.current_indent_level += 1
+                    if statement_c.startswith('}'): self.current_indent_level = max(0, self.current_indent_level -1)
+            self._consume('end')
+            self._consume(';')
+            self.current_indent_level = 0
+            definition_lines.append(self._indent(1) + "return 0; // Corresponds to Conso 'end;'")
+            definition_lines.append("}")
+            return "\n".join(definition_lines)
+        except TranspilerError as e:
+            print(f"Error processing main function: {e}")
+            return None # Indicate failure
+
+    def _process_parameters_from_tokens(self):
+        """Processes parameters from token stream until ')' is found."""
+        params = []
+        if self._peek() == ')': return "void"
+        while self._peek() != ')':
+            if self._peek() == "EOF": raise TranspilerError("Unexpected EOF in parameter list")
+            type_token = self._consume()
+            param_type_conso = type_token[0]
+            c_type = self.type_mapping.get(param_type_conso, param_type_conso)
+            _, param_name, _ = self._consume('id')
+            params.append(f"{c_type} {param_name}")
+            if self._peek() == ',': self._consume(',')
+            elif self._peek() == ')': break
+            else: raise TranspilerError(f"Unexpected token '{self._peek()}' in parameter list")
+        return ", ".join(params) if params else "void"
+
+    # --- Statement Processing (Token-Based) ---
+    def _process_statement_from_tokens(self, is_struct_member=False):
+        """Processes a single statement from the current token position."""
+        token_type = self._peek()
+        if is_struct_member:
+            if token_type in self.type_mapping and token_type != 'dfstrct':
+                return self._process_declaration_from_tokens(assign_default=False)
+            else:
+                line = self.tokens[self.current_pos][2] if isinstance(self.tokens[self.current_pos], tuple) and len(self.tokens[self.current_pos])>2 else '?'
+                print(f"Warning: Skipping non-declaration token '{token_type}' inside struct at line {line}")
+                self._consume(); return ""
+        # --- Processing for lines inside functions/main ---
+        if token_type == '{': self._consume(); return "{"
+        if token_type == '}': self._consume(); return "}"
+        if token_type in self.type_mapping and token_type != 'dfstrct': return self._process_declaration_from_tokens(assign_default=True)
+        elif token_type == 'dfstrct': return self._process_dfstrct_from_tokens()
+        elif token_type == 'prnt': return self._process_print_from_tokens()
+        elif token_type == 'id' and self._peek(1) == '=' and self._peek(2) == 'npt': return self._process_input_from_tokens()
+        elif token_type == 'rtrn': return self._process_return_from_tokens()
+        elif token_type == 'f': return self._process_if_from_tokens()
+        elif token_type == 'lsf': return self._process_else_if_from_tokens()
+        elif token_type == 'ls': return self._process_else_from_tokens()
+        elif token_type == 'whl': return self._process_while_from_tokens()
+        elif token_type == 'fr': return self._process_for_from_tokens()
+        elif token_type == 'd': return self._process_do_from_tokens()
+        elif token_type == 'swtch': return self._process_switch_from_tokens()
+        elif token_type == 'cs': return self._process_case_from_tokens()
+        elif token_type == 'dflt': return self._process_default_from_tokens()
+        elif token_type == 'brk': self._consume('brk'); self._consume(';'); return "break;"
+        elif token_type == 'cntn': self._consume('cntn'); self._consume(';'); return "continue;"
+        else: return self._process_other_statement_from_tokens() # Assignment, call, etc.
+
+    # --- Token-Based Specific Statement Processors ---
+    def _process_declaration_from_tokens(self, assign_default=True):
+        """Processes declaration statement from tokens."""
+        type_token = self._consume()
+        conso_type = type_token[0]
+        c_type = self.type_mapping.get(conso_type, conso_type)
+        processed_decls = []
+        while True:
+            _, var_name, _ = self._consume('id')
+            array_suffix = ""; initializer_tokens = None; is_array = False # Initialize is_array
+            if self._peek() == '[':
+                is_array = True # Set flag
+                self._consume('[')
+                size_tokens = []
+                while self._peek() != ']': size_tokens.append(self._consume()[1])
+                self._consume(']')
+                array_suffix = f"[{''.join(map(str, size_tokens))}]"
+            if self._peek() == '=':
+                self._consume('=')
+                initializer_tokens = []
+                brace_level = 0
+                while not ((self._peek() == ',' or self._peek() == ';') and brace_level == 0):
+                    tok_type, tok_val, _ = self._consume()
+                    if tok_type == '{': brace_level += 1
+                    elif tok_type == '}': brace_level -= 1
+                    initializer_tokens.append((tok_type, tok_val))
+                    if self._peek() is None: raise TranspilerError("Unexpected EOF in initializer")
+            # --- Format C declaration part ---
+            c_decl_part = ""
+            if initializer_tokens:
+                init_val_c = self._tokens_to_c_expression(initializer_tokens)
+                c_decl_part = f"{c_type} {var_name}{array_suffix} = {init_val_c}"
+            else: # No initializer
+                if is_array: # Use the flag here
+                    has_size = any(char.isdigit() for char in array_suffix)
+                    if assign_default and has_size and c_type in ["int", "double", "char"]: c_decl_part = f"{c_type} {var_name}{array_suffix} = {{0}}"
+                    else: c_decl_part = f"{c_type} {var_name}{array_suffix}"
+                else: # Regular variable
+                    if assign_default:
+                        # *** FIXED DEFAULT VALUE ASSIGNMENT ***
+                        default_val = self.default_values.get(conso_type, "/* unknown default */")
+                        c_decl_part = f"{c_type} {var_name} = {default_val}"
+                    else: c_decl_part = f"{c_type} {var_name}"
+            processed_decls.append(c_decl_part)
+            # Check for end of declaration list
+            if self._peek() == ';': self._consume(';'); break
+            elif self._peek() == ',': self._consume(',')
+            else: break # Assume end
+        return "; ".join(processed_decls) + ";"
+
+    def _process_dfstrct_from_tokens(self):
+        """Processes dfstrct statement from tokens."""
+        self._consume('dfstrct')
+        _, struct_type, _ = self._consume('id')
+        var_names = []
+        while self._peek() != ';':
+            if self._peek() == 'id': var_names.append(self._consume('id')[1])
+            elif self._peek() == ',': self._consume(',')
+            else: raise TranspilerError(f"Unexpected token '{self._peek()}' in dfstrct")
+        self._consume(';')
+        c_declarations = [f"{struct_type} {var_name}" for var_name in var_names]
+        return "; ".join(c_declarations) + ";"
+
+    def _process_print_from_tokens(self):
+        """Processes prnt statement from tokens."""
+        self._consume('prnt'); self._consume('(')
+        args = []; current_arg_tokens = []; paren_level = 0
+        while not (self._peek() == ')' and paren_level == 0):
+            if self._peek() == "EOF": raise TranspilerError("Unexpected EOF in print statement")
+            tok_type, tok_val, _ = self._consume()
+            if tok_type == '(': paren_level += 1
+            elif tok_type == ')': paren_level -= 1
+            if tok_type == ',' and paren_level == 0:
+                if current_arg_tokens: args.append(self._tokens_to_c_expression(current_arg_tokens))
+                current_arg_tokens = []
+            else: current_arg_tokens.append((tok_type, tok_val))
+        if current_arg_tokens: args.append(self._tokens_to_c_expression(current_arg_tokens))
+        self._consume(')'); self._consume(';')
+        format_parts = []; c_args = []
+        for arg_str in args:
+             if arg_str.startswith('"'): format_parts.append("%s")
+             elif arg_str.startswith("'"): format_parts.append("%c")
+             elif '.' in arg_str or 'e' in arg_str.lower(): format_parts.append("%.2f") # Basic check
+             else: format_parts.append("%d")
+             c_args.append(arg_str)
+        if not format_parts: return 'printf("\\n"); fflush(stdout);'
+        format_str = " ".join(format_parts) + "\\n"
+        return f'printf("{format_str}", {", ".join(c_args)}); fflush(stdout);'
+
+    def _process_input_from_tokens(self):
+        """Processes input assignment statement from tokens."""
+        _, var_name, _ = self._consume('id'); self._consume('='); self._consume('npt'); self._consume('(')
+        prompt_tokens = []
+        if self._peek() == 'strnglit': prompt_tokens.append(self._consume('strnglit')[1])
+        self._consume(')'); self._consume(';')
+        prompt_c = f'"{prompt_tokens[0]}"' if prompt_tokens else '""'
+        return f"{var_name} = conso_input({prompt_c}); // Potential memory leak" + ";"
+
+    def _process_return_from_tokens(self):
+        """Processes return statement from tokens."""
+        self._consume('rtrn')
+        if self._peek() == ';': self._consume(';'); return "return;"
+        expr_tokens = []
+        while self._peek() != ';': expr_tokens.append(self._consume()[:2])
+        self._consume(';')
+        value_c = self._tokens_to_c_expression(expr_tokens)
+        return f"return {value_c};"
+
+    def _process_if_from_tokens(self):
+        self._consume('f'); self._consume('(')
+        condition_tokens = []; paren_level = 1
+        while paren_level > 0:
+             tok_type, tok_val, _ = self._consume()
+             if tok_type == '(': paren_level += 1
+             elif tok_type == ')': paren_level -= 1
+             if paren_level > 0: condition_tokens.append((tok_type, tok_val))
+        condition_c = self._tokens_to_c_expression(condition_tokens)
+        return f"if ({condition_c})"
+
+    def _process_else_if_from_tokens(self):
+        self._consume('lsf'); self._consume('(')
+        condition_tokens = []; paren_level = 1
+        while paren_level > 0:
+             tok_type, tok_val, _ = self._consume()
+             if tok_type == '(': paren_level += 1
+             elif tok_type == ')': paren_level -= 1
+             if paren_level > 0: condition_tokens.append((tok_type, tok_val))
+        condition_c = self._tokens_to_c_expression(condition_tokens)
+        return f"else if ({condition_c})"
+
+    def _process_else_from_tokens(self): self._consume('ls'); return "else"
+    def _process_while_from_tokens(self):
+        self._consume('whl'); self._consume('(')
+        condition_tokens = []; paren_level = 1
+        while paren_level > 0:
+             tok_type, tok_val, _ = self._consume()
+             if tok_type == '(': paren_level += 1
+             elif tok_type == ')': paren_level -= 1
+             if paren_level > 0: condition_tokens.append((tok_type, tok_val))
+        condition_c = self._tokens_to_c_expression(condition_tokens)
+        return f"while ({condition_c})"
+
+    def _process_for_from_tokens(self):
+        self._consume('fr'); self._consume('(')
+        init_tokens = []; cond_tokens = []; update_tokens = []; part = 1; paren_level = 1
+        while paren_level > 0:
+             tok_type, tok_val, _ = self._consume()
+             if tok_type == '(': paren_level += 1
+             elif tok_type == ')': paren_level -= 1
+             if paren_level == 0: break
+             if tok_type == ';' and paren_level == 1: part += 1
+             else:
+                  token_tuple = (tok_type, tok_val)
+                  if part == 1: init_tokens.append(token_tuple)
+                  elif part == 2: cond_tokens.append(token_tuple)
+                  elif part == 3: update_tokens.append(token_tuple)
+        init_c = self._tokens_to_c_expression(init_tokens) if init_tokens else ""
+        cond_c = self._tokens_to_c_expression(cond_tokens) if cond_tokens else ""
+        update_c = self._tokens_to_c_expression(update_tokens) if update_tokens else ""
+        return f"for ({init_c}; {cond_c}; {update_c})"
+
+    def _process_do_from_tokens(self): self._consume('d'); return "do"
+    def _process_switch_from_tokens(self):
+        self._consume('swtch'); self._consume('(')
+        expr_tokens = []; paren_level = 1
+        while paren_level > 0:
+             tok_type, tok_val, _ = self._consume()
+             if tok_type == '(': paren_level += 1
+             elif tok_type == ')': paren_level -= 1
+             if paren_level > 0: expr_tokens.append((tok_type, tok_val))
+        expr_c = self._tokens_to_c_expression(expr_tokens)
+        return f"switch ({expr_c})"
+
+    def _process_case_from_tokens(self):
+        self._consume('cs'); value_tokens = []
+        while self._peek() != ':': value_tokens.append(self._consume()[:2])
+        self._consume(':'); value_c = self._tokens_to_c_expression(value_tokens)
+        return f"case {value_c}:"
+
+    def _process_default_from_tokens(self): self._consume('dflt'); self._consume(':'); return "default:"
+
+    def _process_other_statement_from_tokens(self):
+        """Processes assignments, function calls etc. from tokens until semicolon."""
+        stmt_tokens = []; paren_level = 0; bracket_level = 0
+        while not (self._peek() == ';' and paren_level == 0 and bracket_level == 0):
+            if self._peek() == "EOF": raise TranspilerError("Unexpected EOF in statement")
+            tok_type, tok_val, _ = self._consume()
+            if tok_type == '(': paren_level += 1
+            elif tok_type == ')': paren_level -= 1
+            elif tok_type == '[': bracket_level += 1
+            elif tok_type == ']': bracket_level -= 1
+            stmt_tokens.append((tok_type, tok_val))
+        self._consume(';')
+        return self._tokens_to_c_expression(stmt_tokens) + ";"
+
+    def _tokens_to_c_expression(self, tokens):
+        """Converts a list of (type, value) tokens into a C expression string."""
+        # Basic implementation - joins values, handles bools/strings/chars
+        c_parts = []
+        last_token_type = None
+        for tok_type, tok_value in tokens:
+            # Add space based on context (simple heuristic)
+            if c_parts and last_token_type not in ['(', '[', '.'] and tok_type not in [')', ']', '.', ';', ',']:
+                 c_parts.append(" ")
+
+            if tok_type == 'blnlit': c_parts.append(self.bool_mapping.get(tok_value, '0'))
+            elif tok_type == 'strnglit': c_parts.append(f'"{tok_value}"')
+            elif tok_type == 'chrlit': c_parts.append(f"'{tok_value}'")
+            # Map keywords if they appear in expressions
+            elif tok_type in self.keyword_mapping: c_parts.append(self.keyword_mapping[tok_type])
+            else: c_parts.append(str(tok_value))
+            last_token_type = tok_type
+
+        expr = "".join(c_parts) # Join without extra spaces initially, rely on token spacing
+        # Replace boolean literals again just in case
+        expr = self._replace_bool_literals(expr)
+        # Handle string comparisons
+        if ' == ' in expr and ('"' in expr or "'" in expr):
+             parts = expr.split(' == ', 1)
+             if len(parts) == 2: expr = f"strcmp({parts[0].strip()}, {parts[1].strip()}) == 0"
+        elif ' != ' in expr and ('"' in expr or "'" in expr):
+             parts = expr.split(' != ', 1)
+             if len(parts) == 2: expr = f"strcmp({parts[0].strip()}, {parts[1].strip()}) != 0"
+        return expr
+
+
+    # --- Helper Methods ---
+    def _indent(self, level): return "    " * max(0, level)
+    def _generate_headers(self): return ("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n#include <stddef.h>\n\n")
+    def _generate_helper_functions(self): return """// Helper function for string input
+char* conso_input(const char* prompt) { printf("%s", prompt); fflush(stdout); char buffer[1024]; char* line = NULL; size_t cl = 0; size_t bl = sizeof(buffer); if (fgets(buffer, bl, stdin) == NULL) { if (feof(stdin)) return NULL; fprintf(stderr, "Input Error\\n"); exit(1); } cl = strlen(buffer); if (cl > 0 && buffer[cl - 1] == '\\n') { buffer[cl - 1] = '\\0'; cl--; } line = malloc(cl + 1); if (line == NULL) { fprintf(stderr, "Malloc Error\\n"); exit(1); } strcpy(line, buffer); return line; }
+// Helper function for string concatenation
+char* conso_concat(const char* s1, const char* s2) { if (s1 == NULL) s1 = ""; if (s2 == NULL) s2 = ""; size_t l1 = strlen(s1); size_t l2 = strlen(s2); char* r = malloc(l1 + l2 + 1); if (r == NULL) { fprintf(stderr, "Malloc Error\\n"); exit(1); } strcpy(r, s1); strcat(r, s2); return r; }"""
+    def _split_args(self, content): # Keep for legacy string processing if needed elsewhere
+        if not content: return []
+        args = []; current_arg = ""; pl = 0; bl = 0; brl = 0; isq = False; idq = False; en = False
+        for char in content:
+            if en: current_arg += char; en = False; continue
+            if char == '\\': current_arg += char; en = True; continue
+            if char == "'" and not idq: isq = not isq
+            elif char == '"' and not isq: idq = not idq
+            if isq or idq: current_arg += char; continue
+            if char == '(': pl += 1; 
+            elif char == ')': pl -= 1
+            elif char == '[': bl += 1; 
+            elif char == ']': bl -= 1
+            elif char == '{': brl += 1; 
+            elif char == '}': brl -= 1
+            if char == ',' and pl == 0 and bl == 0 and brl == 0: args.append(current_arg); current_arg = ""
+            else: current_arg += char
+        args.append(current_arg); sa = [a.strip() for a in args]; return [a for a in sa if a]
+    def _split_declaration_args(self, declaration_part): return self._split_args(declaration_part) # Keep using robust splitter
+    def _replace_bool_literals(self, text): text = re.sub(r'\btr\b', '1', text); text = re.sub(r'\bfls\b', '0', text); return text
+
+
+# --- Standalone Functions ---
 def transpile(conso_code):
-    """
-    Transpile Conso code to C code.
-    
-    Args:
-        conso_code (str): Conso code to transpile
-        
-    Returns:
-        str: Transpiled C code
-    """
-    transpiler = ConsoTranspiler()
-    return transpiler.transpile(conso_code)
+    """Standalone function to transpile Conso code string (legacy)."""
+    print("Warning: Calling string-based transpile. Token-based is preferred.")
+    return "// String-based transpile function needs lexer/parser integration."
 
 def transpile_from_tokens(token_list, symbol_table=None):
     """
-    Transpile Conso code to C code using a token stream.
-    Args:
-        token_list (list): List of Token objects or (type, value, line, column) tuples.
-        symbol_table (SymbolTable): The symbol table from semantic analysis.
-    Returns:
-        str: Transpiled C code
+    Transpiles Conso code from a token list using the token-based transpiler.
     """
-    transpiler = ConsoTranspiler()
-    c_code = transpiler._generate_headers()
-    c_code += transpiler._generate_helper_functions()
+    transpiler = ConsoTranspilerTokenBased(token_list, symbol_table)
+    try:
+        return transpiler.transpile()
+    except TranspilerError as e:
+        print(f"Transpilation Error: {e}", file=sys.stderr)
+        return f"// TRANSPILER ERROR: {e}"
+    except Exception as e:
+        print(f"Unexpected Transpiler Error: {type(e).__name__}: {e}", file=sys.stderr)
+        import traceback
+        print(traceback.format_exc(), file=sys.stderr) # Print full traceback for unexpected errors
+        return f"// UNEXPECTED TRANSPILER ERROR: {type(e).__name__}: {e}"
 
-    # State
-    output_lines = []
-    indent_level = 0
-    i = 0
-    n = len(token_list)
-    
-    def get_token_type_value(tok):
-        if hasattr(tok, 'type') and hasattr(tok, 'value'):
-            return tok.type, tok.value
-        elif isinstance(tok, tuple):
-            if len(tok) == 4:
-                return tok[0], tok[1]
-            elif len(tok) == 3:
-                return tok[0], tok[0]
-        return None, None
+# _tokens_to_code is no longer needed if we transpile directly from tokens
 
-    def fix_string_literals(expr):
-        """Ensure string literals are properly quoted in expressions."""
-        # Replace unquoted 'hello' and similar with quoted versions
-        expr = re.sub(r'(?<!["\w])hello(?!["\w])', '"hello"', expr)
-        expr = re.sub(r'(?<!["\w])ftello(?!["\w])', '"ftello"', expr)
-        expr = re.sub(r'(?<!["\w])World(?!["\w])', '"World"', expr)
-        expr = re.sub(r'(?<!["\w])Oki(?!["\w])', '"Oki"', expr)
-        return expr
-
-    def fix_char_literals(expr):
-        """Ensure char literals are properly quoted in expressions."""
-        # Replace unquoted single character literals with quoted versions
-        expr = re.sub(r'(?<![\'"\w])([a-zA-Z])(?![\'"\w])', r"'\1'", expr)
-        return expr
-
-    # Use the provided symbol_table from semantic analysis
-
-    while i < n:
-        token = token_list[i]
-        ttype, tvalue = get_token_type_value(token)
-
-        # Skip EOF
-        if ttype == "EOF":
-            i += 1
-            continue
-
-        # Main function
-        if ttype == "mn":
-            output_lines.append("int main(int argc, char *argv[]) {")
-            indent_level = 1
-            # Skip possible '(' ... ')' and '{'
-            while i+1 < n:
-                next_type, _ = get_token_type_value(token_list[i+1])
-                if next_type in ["(", ")", "{"]:
-                    i += 1
-                else:
-                    break
-            i += 1
-            continue
-
-        # End statement
-        if ttype == "end":
-            output_lines.append(transpiler._indent(indent_level) + "return 0;")
-            i += 1
-            continue
-
-        # Variable declarations (nt, dbl, bln, chr, strng)
-        # Special case: skip dfstrct in variable declaration logic
-        if ttype == "dfstrct":
-            # Handled in its own block below
-            i += 1
-            continue
-
-        if ttype in transpiler.type_mapping:
-            var_type = transpiler.type_mapping[ttype]
-            j = i + 1
-
-            # For collecting multiple declarations of the same type
-            variables = []
-            has_assignment = False
-
-            # Process all variables of this type until semicolon
-            while j < n:
-                # Skip to identifier
-                if get_token_type_value(token_list[j])[0] == "id":
-                    var_name = get_token_type_value(token_list[j])[1]
-                    j += 1
-
-                    # Check for array dimensions
-                    dimensions = []
-                    has_dimensions = False
-
-                    # Look for array dimensions [...]
-                    while j < n and get_token_type_value(token_list[j])[0] == "[":
-                        has_dimensions = True
-                        j += 1  # Skip '['
-
-                        # Collect dimension size
-                        dim_size = ""
-                        while j < n and get_token_type_value(token_list[j])[0] != "]":
-                            dim_size += str(get_token_type_value(token_list[j])[1])
-                            j += 1
-
-                        if j < n and get_token_type_value(token_list[j])[0] == "]":
-                            dimensions.append(dim_size)
-                            j += 1
-
-                    # Format dimensions for C code
-                    dim_str = "".join(f"[{d}]" for d in dimensions)
-
-                    # Check for assignment
-                    value = None
-                    if j < n and get_token_type_value(token_list[j])[0] == "=":
-                        has_assignment = True
-                        j += 1
-
-                        # Get the value
-                        value_tokens = []
-                        brace_count = 0
-                        while j < n:
-                            next_token_type, next_token_value = get_token_type_value(token_list[j])
-
-                            # End of this declaration
-                            if next_token_type == ";" and brace_count == 0:
-                                break
-                            if next_token_type == "," and brace_count == 0:
-                                break
-
-                            # Track braces for array initialization
-                            if next_token_type == "{":
-                                brace_count += 1
-                            elif next_token_type == "}":
-                                brace_count -= 1
-
-                            # Add token to value
-                            value_tokens.append((next_token_type, next_token_value))
-                            j += 1
-
-                        # Process the value based on type
-                        processed_value = ""
-                        for val_type, val in value_tokens:
-                            if ttype == "bln" and val_type == "blnlit":
-                                if val == "tr":
-                                    processed_value += "1"
-                                elif val == "fls":
-                                    processed_value += "0"
-                            elif ttype == "strng" and val_type == "strnglit":
-                                processed_value += f'"{val}"'
-                            elif ttype == "chr" and val_type == "chrlit":
-                                processed_value += f"'{val}'"
-                            else:
-                                processed_value += str(val)
-                        value = processed_value
-
-                    variables.append((var_name, dim_str, value, has_dimensions))
-
-                    # Check if there's another declaration (comma)
-                    if j < n and get_token_type_value(token_list[j])[0] == ",":
-                        j += 1
-                        continue
-
-                # End of declarations for this type
-                if j < n and get_token_type_value(token_list[j])[0] == ";":
-                    j += 1
-                    break
-
-                j += 1
-
-            # Add the declaration line(s)
-            if variables:
-                # If any variable has assignment or is an array, emit separate lines
-                if has_assignment or any(is_array for _, _, _, is_array in variables):
-                    for var_name, dimensions, value, is_array in variables:
-                        if is_array:
-                            # For array declarations
-                            if value is not None:
-                                output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name}{dimensions} = {value};")
-                            else:
-                                output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name}{dimensions};")
-                        elif ttype == "strng":
-                            # For string variables
-                            if value is not None:
-                                output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name} = {value};")
-                            else:
-                                output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name};")
-                        else:
-                            # For regular variables of other types
-                            if value is not None:
-                                output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name} = {value};")
-                            else:
-                                output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_name};")
-                else:
-                    # No assignments, emit a single line for all variables
-                    var_list = ", ".join(f"{var_name}{dimensions}" for var_name, dimensions, _, _ in variables)
-                    output_lines.append(transpiler._indent(indent_level) + f"{var_type} {var_list};")
-
-            i = j
-            continue
-
-        # 1. First, add this case for struct definitions (strct)
-        elif ttype == "strct":
-            j = i + 1
-            struct_name = ""
-            
-            # Get struct name
-            if j < n and get_token_type_value(token_list[j])[0] == "id":
-                struct_name = get_token_type_value(token_list[j])[1]
-                j += 1
-            
-            # Look for opening brace
-            while j < n and get_token_type_value(token_list[j])[0] != "{":
-                j += 1
-            
-            if j < n:  # Found opening brace
-                # Output struct definition as typedef for flexible usage
-                output_lines.append(f"typedef struct {struct_name} {{")
-                indent_level += 1
-                j += 1  # Skip opening brace
-
-                # Process struct members until closing brace
-                while j < n:
-                    curr_type, curr_value = get_token_type_value(token_list[j])
-
-                    if curr_type == "}":
-                        # End of struct definition
-                        indent_level -= 1
-                        output_lines.append(transpiler._indent(indent_level) + f"}} {struct_name};")
-                        j += 1  # Skip closing brace
-
-                        # Skip semicolon if present
-                        if j < n and get_token_type_value(token_list[j])[0] == ";":
-                            j += 1
-                        break
-                    
-                    # Process struct members (variable declarations)
-                    if curr_type in transpiler.type_mapping:
-                        c_type = transpiler.type_mapping[curr_type]
-                        j += 1  # Skip type token
-                        
-                        # Get member name
-                        if j < n and get_token_type_value(token_list[j])[0] == "id":
-                            member_name = get_token_type_value(token_list[j])[1]
-                            j += 1
-                            
-                            # Skip to semicolon
-                            while j < n and get_token_type_value(token_list[j])[0] != ";":
-                                j += 1
-                            
-                            # Add member declaration
-                            output_lines.append(transpiler._indent(indent_level) + f"{c_type} {member_name};")
-                            
-                            if j < n:  # Skip semicolon
-                                j += 1
-                    else:
-                        j += 1  # Skip unknown tokens
-            
-            i = j
-            continue
-
-        # 2. And add this case for struct instantiations (dfstrct)
-        elif ttype == "dfstrct":
-            var_type = "struct"  # In C, we use 'struct StructName'
-            j = i + 1
-
-            # Get struct type name
-            if j < n and get_token_type_value(token_list[j])[0] == "id":
-                struct_type = get_token_type_value(token_list[j])[1]
-                j += 1
-
-                # Process variable names
-                variables = []
-                while j < n:
-                    curr_type, curr_value = get_token_type_value(token_list[j])
-                    if curr_type == "id":
-                        variables.append(curr_value)
-                        j += 1
-                        # Check for comma (more variables) or semicolon (end)
-                        if j < n:
-                            next_type, _ = get_token_type_value(token_list[j])
-                            if next_type == ",":
-                                j += 1  # Skip comma
-                            elif next_type == ";":
-                                j += 1  # Skip semicolon
-                                break
-                    else:
-                        # Skip other tokens (unless it's a semicolon ending the statement)
-                        if curr_type == ";":
-                            j += 1
-                            break
-                        j += 1
-
-                # Generate struct instantiation code with all collected variables
-                if variables:
-                    var_list = ", ".join(variables)
-                    c_code = f"struct {struct_type} {var_list};"
-                    output_lines.append(transpiler._indent(indent_level) + c_code)
-            # After handling dfstrct, skip all processed tokens
-            i = j
-            continue
-            
-            i = j
-            print("--- End dfstrct debug ---\n")
-            continue
-
-        # Print statement
-        if ttype == "prnt":
-            # Parse prnt ( ... );
-            # Find the opening '('
-            j = i + 1
-            while j < n:
-                next_type, _ = get_token_type_value(token_list[j])
-                if next_type == "(":
-                    break
-                j += 1
-            # Find the closing ')'
-            k = j + 1
-            paren_count = 1
-            args_tokens = []
-            while k < n and paren_count > 0:
-                curr_type, curr_value = get_token_type_value(token_list[k])
-                if curr_type == "(":
-                    paren_count += 1
-                elif curr_type == ")":
-                    paren_count -= 1
-                    if paren_count == 0:
-                        break
-                if paren_count > 0:
-                    args_tokens.append((curr_type, curr_value))
-                k += 1
-
-            # Split arguments by commas
-            arg_groups = []
-            curr_arg = []
-            bracket_count = 0
-            paren_level = 0
-            for t_type, t_value in args_tokens:
-                # Track nested structures to properly group arguments
-                if t_type == "[":
-                    bracket_count += 1
-                    curr_arg.append((t_type, t_value))
-                elif t_type == "]":
-                    bracket_count -= 1
-                    curr_arg.append((t_type, t_value))
-                elif t_type == "(":
-                    paren_level += 1
-                    curr_arg.append((t_type, t_value))
-                elif t_type == ")":
-                    paren_level -= 1
-                    curr_arg.append((t_type, t_value))
-                elif t_type == "," and bracket_count == 0 and paren_level == 0:
-                    if curr_arg:
-                        arg_groups.append(curr_arg)
-                        curr_arg = []
-                else:
-                    curr_arg.append((t_type, t_value))
-            if curr_arg:
-                arg_groups.append(curr_arg)
-
-            # Build format string and argument list
-            format_parts = []
-            arg_exprs = []
-            for arg in arg_groups:
-                # Single token: variable or literal
-                if len(arg) == 1:
-                    atype, avalue = arg[0]
-                    # Variable: look up type
-                    if atype == "id" and symbol_table and symbol_table.lookup(avalue):
-                        vtype = symbol_table.lookup(avalue).data_type
-                        if vtype == "strng":
-                            format_parts.append("%s")
-                        elif vtype == "dbl":
-                            format_parts.append("%.2f")
-                        elif vtype == "nt":
-                            format_parts.append("%d")
-                        elif vtype == "chr":
-                            format_parts.append("%c")
-                        elif vtype == "bln":
-                            format_parts.append("%d")
-                        else:
-                            format_parts.append("%s")
-                        arg_exprs.append(avalue)
-                    # String literal
-                    elif atype == "strnglit":
-                        format_parts.append("%s")
-                        arg_exprs.append(f'"{avalue}"')
-                    # Char literal
-                    elif atype == "chrlit":
-                        format_parts.append("%c")
-                        arg_exprs.append(f"'{avalue}'")
-                    # Number literal
-                    elif atype in ["ntlit", "~ntlit"]:
-                        format_parts.append("%d")
-                        arg_exprs.append(avalue)
-                    elif atype in ["dbllit", "~dbllit"]:
-                        format_parts.append("%.2f")
-                        arg_exprs.append(avalue)
-                    # Boolean literal
-                    elif atype == "blnlit":
-                        format_parts.append("%d")
-                        arg_exprs.append("1" if avalue == "tr" else "0")
-                    else:
-                        format_parts.append("%s")
-                        arg_exprs.append(str(avalue))
-                else:
-                    # Expression: try to infer type
-                    expr_tokens = []
-                    # Convert token tuple list to string tokens list with proper handling
-                    for tok_type, tok_value in arg:
-                        if tok_type == "strnglit":
-                            expr_tokens.append(f'"{tok_value}"')
-                        elif tok_type == "chrlit":
-                            expr_tokens.append(f"'{tok_value}'")
-                        elif tok_type == "blnlit":
-                            expr_tokens.append("1" if tok_value == "tr" else "0")
-                        else:
-                            expr_tokens.append(str(tok_value))
-                    
-                    # Join tokens into expression string
-                    expr_str = ' '.join(expr_tokens)
-                    
-                    # Fix unquoted literals
-                    expr_str = fix_string_literals(expr_str)
-                    expr_str = fix_char_literals(expr_str)
-                    
-                    # Determine expression types for format
-                    expr_types = set()
-                    for tok_type, tok_value in arg:
-                        if tok_type == "id":
-                            dtype = None
-                            if symbol_table and symbol_table.lookup(tok_value):
-                                dtype = symbol_table.lookup(tok_value).data_type
-                            else:
-                                # Try to infer from variable name
-                                if tok_value.startswith("frac"):
-                                    dtype = "dbl"
-                                elif tok_value.startswith("num"):
-                                    dtype = "nt"
-                                elif tok_value.startswith("flag"):
-                                    dtype = "bln"
-                                elif tok_value.startswith("letter") or tok_value.startswith("newLetter"):
-                                    dtype = "chr"
-                                elif tok_value.startswith("name"):
-                                    dtype = "strng"
-                                else:
-                                    # Fallback: assume int
-                                    dtype = "nt"
-                            expr_types.add(dtype)
-                        elif tok_type in ["dbllit", "~dbllit"]:
-                            expr_types.add("dbl")
-                        elif tok_type in ["ntlit", "~ntlit"]:
-                            expr_types.add("nt")
-                        elif tok_type == "strnglit":
-                            expr_types.add("strng")
-                        elif tok_type == "chrlit":
-                            expr_types.add("chr")
-                        elif tok_type == "blnlit":
-                            expr_types.add("bln")
-                    
-                    # Check if this is a comparison expression
-                    has_comparison = any(op in expr_str for op in [">", "<", ">=", "<=", "==", "!="])
-                    
-                    if has_comparison:
-                        # ALL comparisons return an integer in C, regardless of operand types
-                        format_parts.append("%d")
-                        
-                        # Handle string comparisons which need special treatment
-                        if "strng" in expr_types or any(s in expr_str for s in ["name", "\"", "strng"]):
-                            if "==" in expr_str:
-                                parts = expr_str.split("==")
-                                left = parts[0].strip()
-                                right = parts[1].strip()
-                                expr_str = f"strcmp({left}, {right}) == 0"
-                            elif "!=" in expr_str:
-                                parts = expr_str.split("!=")
-                                left = parts[0].strip() 
-                                right = parts[1].strip()
-                                expr_str = f"strcmp({left}, {right}) != 0"
-                    else:
-                        # For non-comparison expressions, infer the type
-                        if "strng" in expr_types:
-                            format_parts.append("%s")
-                        elif "dbl" in expr_types:
-                            format_parts.append("%.2f")
-                        elif "nt" in expr_types:
-                            format_parts.append("%d")
-                        elif "chr" in expr_types:
-                            format_parts.append("%c")
-                        elif "bln" in expr_types:
-                            format_parts.append("%d")
-                        else:
-                            format_parts.append("%d")  # Default to int
-                    
-                    # Convert boolean literals in expressions
-                    for idx, (tok_type, tok_value) in enumerate(arg):
-                        if tok_type == "blnlit":
-                            if tok_value == "tr":
-                                arg[idx] = (tok_type, "1")
-                            elif tok_value == "fls":
-                                arg[idx] = (tok_type, "0")
-                    
-                    # Rebuild expression with converted boolean literals
-                    expr_str = ' '.join(str(val) for _, val in arg)
-                    
-                    # Apply fixes again after rebuilding
-                    expr_str = fix_string_literals(expr_str)
-                    expr_str = fix_char_literals(expr_str)
-                    
-                    arg_exprs.append(expr_str)
-            
-            format_str = " ".join(format_parts) + "\\n"
-            output_lines.append(transpiler._indent(indent_level) + f'printf("{format_str}", {", ".join(arg_exprs)}); fflush(stdout);')
-            i = k + 1
-            if i < n:
-                next_type, _ = get_token_type_value(token_list[i])
-                if next_type == ";":
-                    i += 1
-            continue
-
-        # Opening brace
-        if ttype == "{":
-            indent_level += 1
-            output_lines.append(transpiler._indent(indent_level - 1) + "{")
-            i += 1
-            continue
-
-        # Closing brace
-        if ttype == "}":
-            indent_level -= 1
-            output_lines.append(transpiler._indent(indent_level) + "}")
-            i += 1
-            continue
-
-        # Other statements (assignments, expressions, etc.)
-        if ttype in ["id", "=", "+", "-", "*", "/", "%", "++", "--", "+=", "-=", "*=", "/=", "%=", "==", "!=", "<", "<=", ">", ">=", "tr", "fls", "npt", "cntn", "rtrn"]:
-            stmt_tokens = []
-            j = i
-            bracket_level = 0
-            paren_level = 0
-            
-            while j < n:
-                curr_type, curr_value = get_token_type_value(token_list[j])
-                
-                if curr_type == ";" and bracket_level == 0 and paren_level == 0:
-                    j += 1
-                    break
-                
-                # Track bracket nesting for array access
-                if curr_type == "[":
-                    bracket_level += 1
-                elif curr_type == "]":
-                    bracket_level -= 1
-                
-                # Track parenthesis nesting
-                if curr_type == "(":
-                    paren_level += 1
-                elif curr_type == ")":
-                    paren_level -= 1
-                
-                # Convert boolean literals
-                if curr_type == "blnlit" or curr_value in ["tr", "fls"]:
-                    if curr_value == "tr":
-                        stmt_tokens.append("1")
-                    elif curr_value == "fls":
-                        stmt_tokens.append("0")
-                # Handle string literals
-                elif curr_type == "strnglit":
-                    stmt_tokens.append(f'"{curr_value}"')
-                # Handle char literals
-                elif curr_type == "chrlit":
-                    stmt_tokens.append(f"'{curr_value}'")
-                else:
-                    stmt_tokens.append(str(curr_value))
-                
-                j += 1
-            
-            # Build the statement string
-            stmt_str = ' '.join(stmt_tokens)
-            
-            # Fix unquoted literals
-            stmt_str = fix_string_literals(stmt_str)
-            stmt_str = fix_char_literals(stmt_str)
-            
-            # Handle comparisons in other statements
-            if ("==" in stmt_str or "!=" in stmt_str):
-                # For string comparisons
-                if any(s in stmt_str for s in ["name", "\"", "strng"]):
-                    if "==" in stmt_str:
-                        parts = stmt_str.split("==")
-                        left = parts[0].strip()
-                        right = parts[1].strip()
-                        stmt_str = f"strcmp({left}, {right}) == 0"
-                    elif "!=" in stmt_str:
-                        parts = stmt_str.split("!=")
-                        left = parts[0].strip()
-                        right = parts[1].strip()
-                        stmt_str = f"strcmp({left}, {right}) != 0"
-            
-            output_lines.append(transpiler._indent(indent_level) + stmt_str + ";")
-            i = j
-            continue
-
-        if ttype == ";":
-            i += 1
-            continue
-
-        if ttype == ",":
-            i += 1
-            continue
-
-        i += 1
-
-    c_code += '\n'.join(output_lines)
-    return c_code
-
-# Example usage if script is run directly
+# --- Example Usage ---
 if __name__ == "__main__":
-    # Example Conso code
-    conso_code = """
-    mn() {
-        nt x = 5;
-        prnt("Value of x is: %d", x);
-        end;
-    }
-    """
-    
-    # Transpile to C
-    c_code = transpile(conso_code)
-    print(c_code)
+    # Example token list simulating output from previous stages
+    test_token_list = [
+        # strct myStruct { ... };
+        ('strct', 'strct', 1, 1), ('id', 'myStruct', 1, 7), ('{', '{', 1, 16),
+        ('nt', 'nt', 2, 5), ('id', 'age', 2, 8), (';', ';', 2, 11),
+        ('dbl', 'dbl', 3, 5), ('id', 'grade', 3, 9), (';', ';', 3, 14),
+        ('bln', 'bln', 4, 5), ('id', 'flag', 4, 9), (';', ';', 4, 13),
+        ('chr', 'chr', 5, 5), ('id', 'letter', 5, 9), (';', ';', 5, 15),
+        ('strng', 'strng', 6, 5), ('id', 'name', 6, 11), (';', ';', 6, 15),
+        ('}', '}', 7, 1), (';', ';', 7, 2), # Assuming semicolon after struct def
+
+        # strct ndStruct { ... };
+        ('strct', 'strct', 9, 1), ('id', 'ndStruct', 9, 7), ('{', '{', 9, 16),
+        ('nt', 'nt', 10, 5), ('id', 'age', 10, 8), (';', ';', 10, 11),
+        ('dbl', 'dbl', 11, 5), ('id', 'grade', 11, 9), (';', ';', 11, 14),
+        ('bln', 'bln', 12, 5), ('id', 'flag', 12, 9), (';', ';', 12, 13),
+        ('chr', 'chr', 13, 5), ('id', 'letter', 13, 9), (';', ';', 13, 15),
+        ('strng', 'strng', 14, 5), ('id', 'name', 14, 11), (';', ';', 14, 15),
+        ('}', '}', 15, 1), (';', ';', 15, 2),
+
+        # fnctn vd Test(){ ... }
+        ('fnctn', 'fnctn', 17, 1), ('vd', 'vd', 17, 7), ('id', 'Test', 17, 10), ('(', '(', 17, 14), (')', ')', 17, 15), ('{', '{', 17, 16),
+        ('nt', 'nt', 18, 5), ('id', 'sum', 18, 8), (';', ';', 18, 11),
+        ('dbl', 'dbl', 19, 5), ('id', 'frac', 19, 9), (';', ';', 19, 13),
+        ('id', 'sum', 20, 5), ('=', '=', 20, 9), ('ntlit', 3, 20, 11), (';', ';', 20, 12),
+        ('}', '}', 21, 1),
+
+        # mn(){ ... }
+        ('mn', 'mn', 23, 1), ('(', '(', 23, 3), (')', ')', 23, 4), ('{', '{', 23, 5),
+        ('nt', 'nt', 24, 5), ('id', 'num', 24, 8), (',', ',', 24, 11), ('id', 'num2', 24, 13), ('=', '=', 24, 18), ('ntlit', 3, 24, 20), (';', ';', 24, 21),
+        ('dbl', 'dbl', 25, 5), ('id', 'frac', 25, 9), (';', ';', 25, 13),
+        ('dbl', 'dbl', 26, 5), ('id', 'frac2', 26, 9), ('=', '=', 26, 15), ('dbllit', 5.28, 26, 17), (';', ';', 26, 21),
+        ('bln', 'bln', 27, 5), ('id', 'flag', 27, 9), ('=', '=', 27, 14), ('blnlit', 'tr', 27, 16), (',', ',', 27, 18), ('id', 'flag2', 27, 20), ('=', '=', 27, 26), ('blnlit', 'fls', 27, 28), (';', ';', 27, 31),
+        ('chr', 'chr', 28, 5), ('id', 'letter', 28, 9), ('=', '=', 28, 16), ('chrlit', 'c', 28, 18), (';', ';', 28, 21),
+        ('strng', 'strng', 29, 5), ('id', 'name', 29, 11), ('=', '=', 29, 16), ('strnglit', 'John', 29, 18), (';', ';', 29, 24),
+        ('prnt', 'prnt', 30, 5), ('(', '(', 30, 9), ('strnglit', 'Hi', 30, 10), (',', ',', 30, 14), ('id', 'name', 30, 16), (',', ',', 30, 20), ('ntlit', 1, 30, 22), ('+', '+', 30, 24), ('ntlit', 1, 30, 26), (')', ')', 30, 27), (';', ';', 30, 28),
+        ('end', 'end', 31, 5), (';', ';', 31, 8),
+        ('}', '}', 32, 1), # Note: Parser might not generate this '}' for mn block ending with 'end;'
+
+        ('EOF', None, 33, 1)
+    ]
+
+
+    print("--- Transpiling User's Conso Code from Tokens ---")
+    # Pass None for symbol_table for now
+    generated_c_code = transpile_from_tokens(test_token_list, None)
+    print("\n--- Generated C Code ---")
+    print(generated_c_code)
