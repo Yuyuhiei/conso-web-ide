@@ -189,21 +189,49 @@ class ConsoTranspilerTokenBased:
             params_c = self._process_parameters_from_tokens(); self._consume(')')
             self._consume('{'); definition_lines = [f"{c_return_type} {func_name}({params_c}) {{"]
             self.current_indent_level = 1
-            while self._peek() != '}':
-                if self._peek() is None: raise TranspilerError(f"Unexpected end of stream inside function '{func_name}'")
-                statement_c = self._process_statement_from_tokens()
+            
+            # Process function body until we find the closing brace
+            brace_level = 1  # We're already inside the function
+            while brace_level > 0:
+                if self._peek() is None: 
+                    raise TranspilerError(f"Unexpected end of stream inside function '{func_name}'")
+                
+                # Track brace level to ensure we process the entire function body
+                if self._peek() == '{':
+                    self._consume('{')
+                    brace_level += 1
+                    statement_c = "{"
+                elif self._peek() == '}':
+                    self._consume('}')
+                    brace_level -= 1
+                    if brace_level == 0:  # End of function
+                        break
+                    statement_c = "}"
+                else:
+                    # Process other statements
+                    statement_c = self._process_statement_from_tokens()
+                
                 if statement_c is not None:
                     indent_level = self.current_indent_level
-                    if statement_c == '}': indent_level = max(0, indent_level - 1) # Adjust indent before adding '}'
+                    if statement_c == '}': 
+                        indent_level = max(0, indent_level - 1) # Adjust indent before adding '}'
                     definition_lines.append(self._indent(indent_level) + statement_c)
-                    if statement_c.endswith('{'): self.current_indent_level += 1
-                    if statement_c == '}': self.current_indent_level = max(0, self.current_indent_level -1) # Adjust after adding '}'
-            self._consume('}')
-            self.current_indent_level = 0; definition_lines.append("}")
+                    if statement_c.endswith('{'): 
+                        self.current_indent_level += 1
+                    if statement_c == '}': 
+                        self.current_indent_level = max(0, self.current_indent_level - 1)
+            
+            # Add closing brace for function
+            self.current_indent_level = 0
+            definition_lines.append("}")
             return "\n".join(definition_lines)
-        except TranspilerError as e: print(f"Error processing function '{func_name}': {e}"); self.current_pos = start_pos; 
-        try: self._consume('fnctn') 
-        except: pass; return None
+        
+        except TranspilerError as e: 
+            print(f"Error processing function '{func_name}': {e}")
+            self.current_pos = start_pos
+            try: self._consume('fnctn') 
+            except: pass
+            return None
 
     def _process_main_definition_from_tokens(self):
         """Processes main function definition from tokens."""
@@ -587,7 +615,7 @@ class ConsoTranspilerTokenBased:
             token_pairs = [(self._get_token_info(t)[0], self._get_token_info(t)[1]) for t in arg_tokens]
             arg_c_expr = self._tokens_to_c_expression(token_pairs)
             
-            # Default format - safer to use %s with printf("%s", (arg_type == int) ? "true" : "false") for booleans
+            # Default format
             fmt = "%d"
             
             # Simple case: single token
@@ -617,46 +645,86 @@ class ConsoTranspilerTokenBased:
                             elif var_type == 'bln': fmt = "%d"
                             else: fmt = "%d"  # Default
             else:
-                # Complex expression - look for clues in tokens
-                has_string = False
-                has_double = False
-                has_char = False
-                has_comparison = False
+                # Check for struct member access pattern (id.id)
+                has_struct_member = False
+                struct_member_type = None
                 
-                for token in arg_tokens:
-                    tok_type, tok_val = self._get_token_info(token)[:2]
+                # Look for pattern: identifier followed by dot followed by identifier
+                for i in range(len(arg_tokens) - 2):
+                    tok1_type, tok1_val = self._get_token_info(arg_tokens[i])[:2]
+                    tok2_type, tok2_val = self._get_token_info(arg_tokens[i+1])[:2]
+                    tok3_type, tok3_val = self._get_token_info(arg_tokens[i+2])[:2]
                     
-                    # Check token types
-                    if tok_type == 'strnglit' or tok_type == 'id' and tok_val == 'strng':
-                        has_string = True
-                    elif tok_type == 'dbllit' or tok_type == 'NEGDOUBLELIT':
-                        has_double = True
-                    elif tok_type == 'chrlit':
-                        has_char = True
-                    elif tok_type in ['<', '>', '<=', '>=', '==', '!=', '&&', '||']:
-                        has_comparison = True
-                    
-                    # Check symbol table for identifiers
-                    if tok_type == 'id' and self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                        symbol_entry = self.symbol_table.lookup(tok_val)
-                        if symbol_entry:
-                            var_type = getattr(symbol_entry, 'data_type', None)
-                            if var_type == 'strng': has_string = True
-                            elif var_type == 'dbl': has_double = True
-                            elif var_type == 'chr': has_char = True
+                    if tok1_type == 'id' and tok2_type == '.' and tok3_type == 'id':
+                        has_struct_member = True
+                        
+                        # Try to find the struct type using symbol table
+                        if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                            # First get the struct instance
+                            struct_instance = self.symbol_table.lookup(tok1_val)
+                            if struct_instance and hasattr(struct_instance, 'data_type'):
+                                # Then find the struct definition
+                                struct_def = self.symbol_table.lookup(struct_instance.data_type)
+                                if struct_def and hasattr(struct_def, 'members'):
+                                    # Look up the specific member
+                                    member = struct_def.members.get(tok3_val)
+                                    if member:
+                                        struct_member_type = member.data_type
                 
                 # Determine format based on what we found
-                if has_string:
-                    fmt = "%s"
-                elif has_char:
-                    fmt = "%c"
-                elif has_double:
-                    fmt = "%.2f"
-                elif has_comparison:
-                    fmt = "%d"  # Boolean result
+                if has_struct_member and struct_member_type:
+                    if struct_member_type == 'strng': 
+                        fmt = "%s"
+                    elif struct_member_type == 'dbl': 
+                        fmt = "%.2f"
+                    elif struct_member_type == 'chr': 
+                        fmt = "%c"
+                    elif struct_member_type == 'nt': 
+                        fmt = "%d"
+                    elif struct_member_type == 'bln': 
+                        fmt = "%d"
+                    
+                # If not struct member or couldn't determine type, check for other patterns
                 else:
-                    # Default to int for arithmetic and other expressions
-                    fmt = "%d"
+                    has_string = False
+                    has_double = False
+                    has_char = False
+                    has_comparison = False
+                    
+                    for token in arg_tokens:
+                        tok_type, tok_val = self._get_token_info(token)[:2]
+                        
+                        # Check token types
+                        if tok_type == 'strnglit' or tok_type == 'id' and tok_val == 'strng':
+                            has_string = True
+                        elif tok_type == 'dbllit' or tok_type == 'NEGDOUBLELIT':
+                            has_double = True
+                        elif tok_type == 'chrlit':
+                            has_char = True
+                        elif tok_type in ['<', '>', '<=', '>=', '==', '!=', '&&', '||']:
+                            has_comparison = True
+                        
+                        # Check symbol table for identifiers
+                        if tok_type == 'id' and self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                            symbol_entry = self.symbol_table.lookup(tok_val)
+                            if symbol_entry:
+                                var_type = getattr(symbol_entry, 'data_type', None)
+                                if var_type == 'strng': has_string = True
+                                elif var_type == 'dbl': has_double = True
+                                elif var_type == 'chr': has_char = True
+                    
+                    # Determine format based on what we found
+                    if has_string:
+                        fmt = "%s"
+                    elif has_char:
+                        fmt = "%c"
+                    elif has_double:
+                        fmt = "%.2f"
+                    elif has_comparison:
+                        fmt = "%d"  # Boolean result
+                    else:
+                        # Default to int for arithmetic and other expressions
+                        fmt = "%d"
             
             # Add format and argument
             format_parts.append(fmt)
@@ -667,12 +735,74 @@ class ConsoTranspilerTokenBased:
         return f'printf("{format_str}", {", ".join(c_args)}); fflush(stdout);'
 
     def _process_input_from_tokens(self):
-        _, var_name, _ = self._consume('id'); self._consume('='); self._consume('npt'); self._consume('(')
-        prompt_tokens = []
-        if self._peek() == 'strnglit': prompt_tokens.append(self._consume('strnglit')[1])
-        self._consume(')'); self._consume(';')
-        prompt_c = f'"{prompt_tokens[0]}"' if prompt_tokens else '""'
-        return f"{var_name} = conso_input({prompt_c}); // Potential memory leak" + ";"
+        """Process input statement (varname = npt("prompt");) with type-based handling"""
+        # Get the variable name being assigned
+        _, var_name, _ = self._consume('id')
+        self._consume('=')
+        self._consume('npt')
+        self._consume('(')
+        
+        # Get the prompt string if present
+        prompt = ""
+        if self._peek() == 'strnglit':
+            prompt = self._consume('strnglit')[1]
+        
+        self._consume(')')
+        self._consume(';')
+        
+        # Determine variable type using symbol table
+        var_type = 'strng'  # Default to string if type can't be determined
+        array_size = 100    # Default size for string buffers
+        is_array = False
+        
+        if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+            symbol = self.symbol_table.lookup(var_name)
+            if symbol:
+                var_type = getattr(symbol, 'data_type', 'strng')
+                is_array = getattr(symbol, 'is_array', False)
+                # If it's an array, try to get the size
+                if is_array and hasattr(symbol, 'array_sizes') and symbol.array_sizes:
+                    if isinstance(symbol.array_sizes[0], int):
+                        array_size = symbol.array_sizes[0]
+        
+        # Generate appropriate input code based on type
+        c_code = []
+        
+        # Always print the prompt
+        if prompt:
+            c_code.append(f'printf("{prompt}");')
+        
+        # Generate type-specific input code
+        if var_type == 'nt':
+            # Integer input
+            c_code.append(f'scanf("%d", &{var_name});')
+            c_code.append('getchar(); // Consume newline')
+        elif var_type == 'dbl':
+            # Double input
+            c_code.append(f'scanf("%lf", &{var_name});')
+            c_code.append('getchar(); // Consume newline')
+        elif var_type == 'chr':
+            # Character input
+            c_code.append(f'{var_name} = getchar();')
+            c_code.append('getchar(); // Consume newline if present')
+        elif var_type == 'bln':
+            # Boolean input - read as int
+            c_code.append(f'{{ int temp; scanf("%d", &temp); {var_name} = temp != 0; }}')
+            c_code.append('getchar(); // Consume newline')
+        else:
+            # String input (default)
+            if is_array:
+                # For array variables, use fgets directly
+                c_code.append(f'fgets({var_name}, sizeof({var_name}), stdin);')
+                # Remove trailing newline if present
+                c_code.append(f'{{ char *p = strchr({var_name}, \'\\n\'); if(p) *p = 0; }}')
+            else:
+                # For regular char* variables, allocate buffer, read, and assign
+                c_code.append(f'{{ char buffer[{array_size}]; fgets(buffer, {array_size}, stdin);')
+                c_code.append('char *p = strchr(buffer, \'\\n\'); if(p) *p = 0;')
+                c_code.append(f'{var_name} = strdup(buffer); }}')
+        
+        return ' '.join(c_code)
 
     def _process_return_from_tokens(self):
         self._consume('rtrn')
