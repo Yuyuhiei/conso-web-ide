@@ -23,8 +23,10 @@ class Symbol:
         self.is_array = is_array
         self.array_dimensions = array_dimensions  # 1 for 1D, 2 for 2D
         self.array_sizes = array_sizes  # [size] for 1D, [size1, size2] for 2D
-        self.line = line
+        self.line = line 
         self.column = column
+        # New attribute to track initialized members of struct instances
+        self.initialized_members = set() if type == 'struct_instance' else None
 
     def __str__(self):
         status = "initialized" if self.initialized else "uninitialized"
@@ -978,15 +980,15 @@ class SemanticAnalyzer:
             if self.current_scope.lookup(instance_name):
                 raise SemanticError(f"Variable '{instance_name}' already declared", line, column)
             
-            # Create struct instance symbol
             instance_symbol = Symbol(
                 name=instance_name,
                 type='struct_instance',
-                data_type=struct_type_name,  # Store the struct type name
-                initialized=True,  # Struct instances are considered initialized
+                data_type=struct_type_name,
+                initialized=True,
                 line=line,
                 column=column
             )
+            instance_symbol.initialized_members = set()  # Initialize empty set for tracking initialized members
             
             # Add to current scope
             self.current_scope.insert(instance_name, instance_symbol)
@@ -1049,25 +1051,15 @@ class SemanticAnalyzer:
         
         self.advance()  # Move past '.'
         
-        # Process member name
+        # Get member name
         token_type, member_name, line, column = self.get_current_token()
         if token_type != 'id':
             raise SemanticError(f"Expected member name, got '{token_type}'", line, column)
         
-        # Debug
-        print(f"Looking for member '{member_name}' in struct '{struct_type_name}'")
-        print(f"Struct members: {list(struct_symbol.members.keys()) if hasattr(struct_symbol, 'members') else 'No members attribute'}")
-        
         # Check if member exists in the struct
+        struct_symbol = self.global_scope.lookup(instance_symbol.data_type)
         if not hasattr(struct_symbol, 'members') or member_name not in struct_symbol.members:
-            raise SemanticError(f"Struct '{struct_type_name}' has no member '{member_name}'", line, column)
-        
-        # Additional debug to see the member being accessed
-        print(f"Successfully accessed member '{member_name}' of struct instance '{instance_name}'")
-    
-        # Get the member type
-        member_symbol = struct_symbol.members[member_name]
-        member_type = member_symbol.data_type
+            raise SemanticError(f"Struct '{instance_symbol.data_type}' has no member '{member_name}'", line, column)
         
         self.advance()  # Move past member name
         
@@ -1076,35 +1068,40 @@ class SemanticAnalyzer:
         if self.get_current_token()[0] == '=':
             is_assignment = True
             
+            # Process assignment logic as before
             self.advance()  # Move past '='
             
-            # Find the end of the assignment expression (should be the semicolon)
+            # Find and analyze the expression
             start_pos = self.current_token_index
-            
             while self.current_token_index < len(self.token_stream) and self.token_stream[self.current_token_index][0] != ';':
                 self.advance()
-            
             end_pos = self.current_token_index
             self.current_token_index = start_pos
             
-            # Analyze the assigned expression
             expr_type = self.analyze_expression(end_pos)
             
             # Verify type compatibility
-            if expr_type != member_type:
-                raise SemanticError(f"Type mismatch: Cannot assign '{expr_type}' to struct member of type '{member_type}'", 
+            member_symbol = struct_symbol.members[member_name]
+            if expr_type != member_symbol.data_type:
+                raise SemanticError(f"Type mismatch: Cannot assign '{expr_type}' to struct member of type '{member_symbol.data_type}'", 
                                 self.get_current_token()[2], self.get_current_token()[3])
             
-            # Mark member as initialized
-            # Note: In a real implementation, you'd need to track which members are initialized per instance
-            member_symbol.initialized = True
+            # Mark this member as initialized for this instance
+            if not hasattr(instance_symbol, 'initialized_members'):
+                instance_symbol.initialized_members = set()
+            instance_symbol.initialized_members.add(member_name)
             
             # Move past semicolon if present
             if self.get_current_token()[0] == ';':
-                self.advance()  # Move past semicolon
+                self.advance()
+        else:
+            # This is a read access - check if the member has been initialized
+            if not hasattr(instance_symbol, 'initialized_members') or member_name not in instance_symbol.initialized_members:
+                raise SemanticError(f"Uninitialized struct member '{instance_name}.{member_name}' accessed", line, column)
         
-        # Return the member type
-        return member_type
+        # Get the member type for expression typing
+        member_symbol = struct_symbol.members[member_name]
+        return member_symbol.data_type
             
     def analyze_main_function(self):
         """Analyze the main function"""
@@ -2267,9 +2264,13 @@ class SemanticAnalyzer:
                 # Determine the type of the current operand
                 elif token_type in ['ntlit', '~ntlit']:
                     operand_type = 'nt'
+                    if current_operator == '/' and token_value == '0':
+                        raise SemanticError(f"Division by zero detected", line, column)
                     self.advance()
                 elif token_type in ['dbllit', '~dbllit']:
                     operand_type = 'dbl'
+                    if current_operator == '/' and token_value == '0':
+                        raise SemanticError(f"Division by zero detected", line, column)
                     self.advance()
                 elif token_type in ['true', 'false', 'blnlit']:
                     operand_type = 'bln'
