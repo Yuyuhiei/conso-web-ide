@@ -589,7 +589,7 @@ class ConsoTranspilerTokenBased:
         # Handle empty print
         if self._peek() == ')':
             self._consume(')'); self._consume(';')
-            return 'printf("\\n"); fflush(stdout);'
+            return 'printf(""); fflush(stdout);'  # Empty print - no newline
         
         # Process arguments
         while not (self._peek() == ')' and paren_level == 0):
@@ -730,8 +730,9 @@ class ConsoTranspilerTokenBased:
             format_parts.append(fmt)
             c_args.append(arg_c_expr)
         
-        # Generate printf statement
-        format_str = " ".join(format_parts) + "\\n"
+         # Generate printf statement - NO automatic newline
+        format_str = " ".join(format_parts)
+        
         return f'printf("{format_str}", {", ".join(c_args)}); fflush(stdout);'
 
     def _process_input_from_tokens(self):
