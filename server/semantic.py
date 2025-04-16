@@ -3163,22 +3163,13 @@ class SemanticAnalyzer:
         
         self.advance()  # Move past '{'
 
+        # Save old switch and case block state
         old_in_switch = self.in_switch
-        old_in_case_block = self.in_case_block # Save old case block state too
+        old_in_case_block = self.in_case_block
+        
+        # Set new state - we're now in a switch but not yet in a case block
         self.in_switch = True
-        self.in_case_block = False # Initially not in a case block
-        
-        # Existing code for creating a new scope
-        switch_scope = SymbolTable(parent=self.current_scope, scope_name="switch block")
-        original_scope = self.current_scope
-        self.current_scope = switch_scope
-    
-        
-        # Just before you restore the original scope at the end of the method, add this:
-        self.in_switch = old_in_switch
-        
-        # Existing code to restore scope
-        self.current_scope = original_scope
+        self.in_case_block = False
         
         # Create a new scope for the switch body
         switch_scope = SymbolTable(parent=self.current_scope, scope_name="switch block")
@@ -3243,53 +3234,41 @@ class SemanticAnalyzer:
                 # Reset break flag
                 found_break = False
                 
-                # Track position before case body
-                case_start_pos = self.current_token_index
-                
-                # Skip through the case body to find the break
+                # Process statements until break or next case/default
                 while self.current_token_index < len(self.token_stream):
                     current_token = self.get_current_token()[0]
-                     # Check for continue statement
+                    
+                    # Check for continue statement
                     if current_token == 'cntn':
-                        raise SemanticError("Continue statement cannot be used in a switch statement", 
+                        raise SemanticError("Continue statement cannot be used directly in a switch case", 
                                         self.get_current_token()[2], self.get_current_token()[3])
                     
+                    # Found break - set flag and process it
                     if current_token == 'brk':
                         found_break = True
-                        self.advance()  # Move past 'brk'
-                        
-                        # Check for semicolon after break
-                        if self.get_current_token()[0] != ';':
-                            raise SemanticError(f"Expected ';' after 'brk', got '{self.get_current_token()[0]}'", 
-                                            self.get_current_token()[2], self.get_current_token()[3])
-                        
-                        self.advance()  # Move past ';'
-                        break
-                    elif current_token in ['cs', 'dflt', '}']:
-                        # Reached another case or end of switch without finding break
-                        raise SemanticError(f"Missing 'brk' statement at end of case", line, column)
-                    elif current_token == 'swtch':
-                        # Nested switch not allowed
-                        raise SemanticError(f"Nested switch statements are not allowed", 
-                                        self.get_current_token()[2], self.get_current_token()[3])
-                    else:
-                        self.advance()
-                
-                # Go back to process the case body statements
-                self.current_token_index = case_start_pos
-                
-                # Process statements until we find the break
-                while self.current_token_index < len(self.token_stream):
-                    current_token = self.get_current_token()[0]
-                    if current_token == 'brk':
-                        # Found the break, advance past it and the semicolon
-                        self.advance()  # Move past 'brk'
-                        self.advance()  # Move past ';'
+                        self.analyze_break_statement()
                         break
                     
-                    # Handle various statement types
+                    # Reached another case or end of switch without finding break
+                    if current_token in ['cs', 'dflt', '}']:
+                        raise SemanticError(f"Missing 'brk' statement at end of case", line, column)
+                    
+                    # Now we'll properly handle statements in the case block
+                    # Handle various statement types (including loops and nested switches)
                     if current_token == 'f':
                         self.analyze_if_statement()
+                    elif current_token == 'whl':
+                        # Allow loops inside switch cases
+                        self.analyze_while_loop()
+                    elif current_token == 'fr':
+                        # Allow for loops inside switch cases
+                        self.analyze_for_loop()
+                    elif current_token == 'd':
+                        # Allow do-while loops inside switch cases
+                        self.analyze_do_while_loop()
+                    elif current_token == 'swtch':
+                        # Allow nested switch statements - REMOVED the restriction
+                        self.analyze_switch_statement()
                     elif current_token == 'cnst':
                         self.analyze_constant_declaration()
                     elif current_token == 'dfstrct':
@@ -3328,6 +3307,10 @@ class SemanticAnalyzer:
                             self.check_variable_usage(id_token_value, 
                                                 self.get_current_token()[2], self.get_current_token()[3])
                             self.advance()
+                    elif current_token == 'prnt':
+                        self.analyze_print_statement()
+                    elif current_token == 'rtrn':
+                        self.analyze_return_in_conditional()
                     else:
                         self.advance()
             
@@ -3353,49 +3336,38 @@ class SemanticAnalyzer:
                 # Reset break flag
                 found_break = False
                 
-                # Track position before default body
-                default_start_pos = self.current_token_index
-                
-                # Skip through the default body to find the break
+                # Process statements until break or next case/default (similar logic to case)
                 while self.current_token_index < len(self.token_stream):
                     current_token = self.get_current_token()[0]
+                    
                     # Check for continue statement
                     if current_token == 'cntn':
-                        raise SemanticError("Continue statement cannot be used in a switch statement", 
+                        raise SemanticError("Continue statement cannot be used directly in a switch default block", 
                                         self.get_current_token()[2], self.get_current_token()[3])
                     
+                    # Found break
                     if current_token == 'brk':
                         found_break = True
-                        self.advance()  # Move past 'brk'
-                        
-                        # Check for semicolon after break
-                        if self.get_current_token()[0] != ';':
-                            raise SemanticError(f"Expected ';' after 'brk', got '{self.get_current_token()[0]}'", 
-                                            self.get_current_token()[2], self.get_current_token()[3])
-                        
-                        self.advance()  # Move past ';'
-                        break
-                    elif current_token in ['cs', 'dflt', '}']:
-                        # Reached another case or end of switch without finding break
-                        raise SemanticError(f"Missing 'brk' statement at end of default case", line, column)
-                    else:
-                        self.advance()
-                
-                # Go back to process the default body statements
-                self.current_token_index = default_start_pos
-                
-                # Process statements until we find the break
-                while self.current_token_index < len(self.token_stream):
-                    current_token = self.get_current_token()[0]
-                    if current_token == 'brk':
-                        # Found the break, advance past it and the semicolon
-                        self.advance()  # Move past 'brk'
-                        self.advance()  # Move past ';'
+                        self.analyze_break_statement()
                         break
                     
-                    # Handle various statement types (same as case body)
+                    # Reached another case or end of switch without finding break
+                    if current_token in ['cs', 'dflt', '}']:
+                        raise SemanticError(f"Missing 'brk' statement at end of default case", line, column)
+                    
+                    # Now handle all possible statements in the default block
+                    # Process statements (same as case block)
                     if current_token == 'f':
                         self.analyze_if_statement()
+                    elif current_token == 'whl':
+                        self.analyze_while_loop()
+                    elif current_token == 'fr':
+                        self.analyze_for_loop()
+                    elif current_token == 'd':
+                        self.analyze_do_while_loop()
+                    elif current_token == 'swtch':
+                        # Allow nested switch
+                        self.analyze_switch_statement()
                     elif current_token == 'cnst':
                         self.analyze_constant_declaration()
                     elif current_token == 'dfstrct':
@@ -3434,8 +3406,13 @@ class SemanticAnalyzer:
                             self.check_variable_usage(id_token_value, 
                                                 self.get_current_token()[2], self.get_current_token()[3])
                             self.advance()
+                    elif current_token == 'prnt':
+                        self.analyze_print_statement()
+                    elif current_token == 'rtrn':
+                        self.analyze_return_in_conditional()
                     else:
                         self.advance()
+            
             elif token_type == 'brk' and not self.in_case_block:
                 raise SemanticError("Break statement in switch must appear within a case or default block", 
                                 line, column)
@@ -4050,20 +4027,6 @@ class SemanticAnalyzer:
         old_in_loop = self.in_loop
         self.in_loop = True
         
-        # Existing code for creating a new scope
-        do_scope = SymbolTable(parent=self.current_scope, scope_name="do-while block")
-        original_scope = self.current_scope
-        self.current_scope = do_scope
-        
-        # Process do-body statements
-        self.analyze_block_statements()
-        
-        # Just before you restore the original scope, add this:
-        self.in_loop = old_in_loop
-        
-        # Existing code to restore scope
-        self.current_scope = original_scope
-        
         # Create a new scope for the do-body
         do_scope = SymbolTable(parent=self.current_scope, scope_name="do-while block")
         original_scope = self.current_scope
@@ -4125,12 +4088,15 @@ class SemanticAnalyzer:
         self.current_token_index = outer_paren_end
         self.advance()  # Move past the closing parenthesis
         
-        # Process semicolon after condition
+        # FOR DO-WHILE: Look for semicolon, not opening brace
         token_type, token_value, line, column = self.get_current_token()
         if token_type != ';':
             raise SemanticError(f"Expected ';' after 'd-whl' condition, got '{token_type}'", line, column)
         
         self.advance()  # Move past ';'
+        
+        # Restore the loop flag
+        self.in_loop = old_in_loop
 
     def analyze_increment_operation(self):
         """Analyze increment or decrement operation (++, --)"""
