@@ -341,15 +341,26 @@ class ConsoTranspilerTokenBased:
 
     # --- Token-Based Specific Statement Processors ---
     def _process_declaration_from_tokens(self, assign_default=True):
-        """Processes declaration statement from tokens. Handles array initializers with default values."""
-        type_token = self._consume(); conso_type = type_token[0]; c_type = self.type_mapping.get(conso_type, conso_type)
+        """
+        Processes declaration statement from tokens.
+        Handles array initializers. Assigns default values ONLY to non-array variables
+        if assign_default is True and no explicit initializer is provided.
+        Arrays are NOT initialized by default.
+        """
+        type_token = self._consume()
+        conso_type = type_token[0]
+        c_type = self.type_mapping.get(conso_type, conso_type)
         processed_decls = []
+
         while True: # Loop for comma-separated parts (e.g., nt x, y=1;)
-            _, var_name, token_full = self._consume('id'); array_suffix = ""; initializer_tokens = None; is_array = False
+            _, var_name, token_full = self._consume('id')
+            array_suffix = ""
+            initializer_tokens = None
+            is_array = False
             line_num = self._get_token_info(token_full)[2]
-            
+
             # Parse array dimensions
-            dimensions = []
+            dimensions = [] # Store dimensions for potential later use if needed
             if self._peek() == '[':
                 is_array = True
                 # Process each dimension
@@ -357,187 +368,93 @@ class ConsoTranspilerTokenBased:
                     self._consume('[')
                     size_tokens = []
                     while self._peek() != ']':
-                        if self._peek() is None: raise TranspilerError("Unterminated array size", line_num)
-                        size_tok = self._consume()
-                        size_tokens.append(size_tok[1])
-                    self._consume(']')
-                    
-                    # Attempt to parse the size as an integer
-                    try:
-                        if isinstance(size_tokens[0], int):
-                            dimensions.append(int(size_tokens[0]))
+                        if self._peek() is None:
+                            raise TranspilerError("Unterminated array size", line_num)
+                        # Consume token and store its value
+                        size_tok_type, size_tok_val, _ = self._consume()
+                        # Convert boolean literals if necessary for size expression
+                        if size_tok_type == 'blnlit':
+                             size_tokens.append(self.bool_mapping.get(size_tok_val, '0'))
                         else:
-                            # If it's not a simple integer (could be a variable name), just use it as is
-                            dimensions.append(size_tokens[0])
-                    except (ValueError, IndexError):
-                        dimensions.append(''.join(map(str, size_tokens)))
-                    
-                    array_suffix += f"[{''.join(map(str, size_tokens))}]"
-            
-            # Get default value based on type
+                             size_tokens.append(str(size_tok_val)) # Ensure value is string
+
+                    self._consume(']')
+                    dimension_expr = "".join(size_tokens)
+                    dimensions.append(dimension_expr) # Store the expression/value
+                    array_suffix += f"[{dimension_expr}]"
+
+            # Get default value based on type (only used for non-arrays now)
             default_val = self.default_values.get(conso_type, "0")
-            
-            # Handle initializer
+
+            # Handle explicit initializer
             if self._peek() == '=':
                 self._consume('=')
-                
-                # DEBUG: print statement to check token positions
-                print(f"Processing initializer for {var_name} with dimensions {dimensions}")
-                
-                # Collect initializer tokens
                 initializer_tokens = []
                 brace_level = 0
-                
+                paren_level = 0 # Track parentheses within initializer if needed
+
+                # Collect all tokens belonging to the initializer expression
                 while True:
-                    if self._peek() is None: 
+                    next_token_type = self._peek()
+                    if next_token_type is None:
                         raise TranspilerError("Unterminated initializer", line_num)
-                    
-                    # Check for end of initializer (comma or semicolon at top level)
-                    if (self._peek() == ',' or self._peek() == ';') and brace_level == 0:
+
+                    # Stop if we hit the end of the declaration part (',' or ';')
+                    # at the top level (outside braces/parentheses)
+                    if (next_token_type == ',' or next_token_type == ';') and brace_level == 0 and paren_level == 0:
                         break
-                    
-                    # Get next token
-                    tok_type, tok_val, _ = self._consume()
-                    initializer_tokens.append((tok_type, tok_val))
-                    
-                    # Track nesting level
+
+                    tok_type, tok_val, token_full = self._consume()
+                    initializer_tokens.append((tok_type, tok_val)) # Store as (type, value)
+
+                    # Track nesting level for braces and parentheses
                     if tok_type == '{': brace_level += 1
                     elif tok_type == '}': brace_level -= 1
-                
-                # For 1D arrays with initializers, we need to ensure all elements have values
-                if is_array and len(dimensions) == 1 and isinstance(dimensions[0], int) and assign_default:
-                    # First convert tokens to C string to see what we have
-                    init_str = self._tokens_to_c_expression(initializer_tokens)
-                    
-                    # DEBUG: print initializer string
-                    print(f"Initial value for {var_name}: {init_str}")
-                    
-                    # Count the elements in the initializer
-                    element_count = 0
-                    current_level = 0
-                    in_element = False
-                    
-                    # Basic parse of the initializer - this is a simplified approach
-                    for tok_type, _ in initializer_tokens:
-                        if tok_type == '{':
-                            current_level += 1
-                        elif tok_type == '}':
-                            current_level -= 1
-                            # When we reach the end of the outer array, add last element if needed
-                            if current_level == 0 and in_element:
-                                element_count += 1
-                                in_element = False
-                        elif tok_type == ',':
-                            if current_level == 1:  # Only count commas at the first nesting level
-                                if in_element:
-                                    element_count += 1
-                                    in_element = False
-                        elif tok_type in ['ntlit', 'dbllit', 'chrlit', 'strnglit', 'blnlit', 'tr', 'fls', 'id'] and current_level == 1:
-                            if not in_element:
-                                in_element = True
-                    
-                    # DEBUG: print element count
-                    print(f"Found {element_count} elements in initializer for {var_name}[{dimensions[0]}]")
-                    
-                    # If we have fewer elements than the array size, add default values
-                    if element_count < dimensions[0]:
-                        # Create array of default values
-                        default_values = [default_val] * dimensions[0]
-                        
-                        # Extract actual values from initializer
-                        actual_values = []
-                        current_level = 0
-                        current_element = ""
-                        
-                        for i, (tok_type, tok_val) in enumerate(initializer_tokens):
-                            if tok_type == '{':
-                                if current_level == 0:
-                                    # Skip outer opening brace
-                                    current_level += 1
-                                    continue
-                                else:
-                                    current_level += 1
-                                    current_element += '{'
-                            elif tok_type == '}':
-                                if current_level == 1:
-                                    # End of outer array
-                                    if current_element:
-                                        actual_values.append(current_element)
-                                    current_level -= 1
-                                else:
-                                    current_level -= 1
-                                    current_element += '}'
-                            elif tok_type == ',':
-                                if current_level == 1:
-                                    # Separator between elements
-                                    if current_element:
-                                        actual_values.append(current_element)
-                                        current_element = ""
-                                else:
-                                    current_element += ','
-                            else:
-                                # Handle the actual value
-                                if tok_type == 'blnlit':
-                                    val = self.bool_mapping.get(tok_val, '0')
-                                elif tok_type == 'chrlit':
-                                    val = f"'{tok_val}'"
-                                elif tok_type == 'strnglit':
-                                    val = f'"{tok_val}"'
-                                else:
-                                    val = str(tok_val)
-                                
-                                if current_level >= 1:
-                                    if not current_element:
-                                        current_element = val
-                                    else:
-                                        current_element += val
-                        
-                        # Replace as many default values as we have actual values
-                        for i, val in enumerate(actual_values):
-                            if i < len(default_values):
-                                default_values[i] = val
-                        
-                        # Create new initializer with all values
-                        init_str = "{ " + ", ".join(default_values) + " }"
-                    
-                    c_decl_part = f"{c_type} {var_name}{array_suffix} = {init_str}"
-                else:
-                    # For non-arrays or multidimensional arrays, use the original initializer
-                    init_str = self._tokens_to_c_expression(initializer_tokens)
-                    c_decl_part = f"{c_type} {var_name}{array_suffix} = {init_str}"
+                    elif tok_type == '(': paren_level += 1
+                    elif tok_type == ')': paren_level -= 1
+
+                    # Basic error check for mismatched braces/parentheses
+                    if brace_level < 0 or paren_level < 0:
+                         raise TranspilerError("Mismatched braces/parentheses in initializer", line_num)
+
+
+                # Convert collected tokens to C expression string
+                init_str = self._tokens_to_c_expression(initializer_tokens)
+                c_decl_part = f"{c_type} {var_name}{array_suffix} = {init_str}"
+
             else:
-                # No initializer - generate default values
+                # No explicit initializer provided
                 if is_array:
-                    if assign_default:
-                        # For 1D arrays, generate initializer with default values for all elements
-                        if len(dimensions) == 1 and isinstance(dimensions[0], int):
-                            init_values = ", ".join([default_val] * dimensions[0])
-                            c_decl_part = f"{c_type} {var_name}{array_suffix} = {{{init_values}}}"
-                        # For 2D arrays, generate nested initializers
-                        elif len(dimensions) == 2 and all(isinstance(d, int) for d in dimensions):
-                            row_init = ", ".join([default_val] * dimensions[1])
-                            all_rows = ", ".join(["{" + row_init + "}"] * dimensions[0])
-                            c_decl_part = f"{c_type} {var_name}{array_suffix} = {{{all_rows}}}"
-                        else:
-                            # For variable sized or higher dimension arrays, use simple initializer
-                            c_decl_part = f"{c_type} {var_name}{array_suffix} = {{0}}"
-                    else:
-                        c_decl_part = f"{c_type} {var_name}{array_suffix}"
+                    # *** MODIFIED PART ***
+                    # Arrays are NOT initialized by default. Just declare them.
+                    c_decl_part = f"{c_type} {var_name}{array_suffix}"
                 else:
-                    # Regular variable without initializer
+                    # Regular (non-array) variable without initializer
                     if assign_default:
+                        # Assign default value ONLY if assign_default is True
                         c_decl_part = f"{c_type} {var_name} = {default_val}"
                     else:
+                        # Otherwise, just declare the variable
                         c_decl_part = f"{c_type} {var_name}"
-            
+
             processed_decls.append(c_decl_part)
-            
-            # Check for end of declaration list
-            if self._peek() == ';': self._consume(';'); break
-            elif self._peek() == ',': self._consume(',')
+
+            # Check for end of declaration list (semicolon) or next declaration (comma)
+            if self._peek() == ';':
+                self._consume(';')
+                break # End of the declaration statement
+            elif self._peek() == ',':
+                self._consume(',')
+                # Continue loop for the next variable in the list
             else:
-                print(f"Warning: Missing ; or , after declaration near line {line_num}?"); break
-        
+                # If neither ';' nor ',' follows, it might be an error or just the end
+                # of the input in some contexts. We break assuming the statement ends.
+                # A more robust parser might raise an error here if ';' is strictly required.
+                # print(f"Warning: Missing ; or , after declaration part near line {line_num}?")
+                break # Assume end of statement if unexpected token
+
+        # Join all parts of the declaration (if multiple variables were declared)
+        # and add the final semicolon.
         return "; ".join(processed_decls) + ";"
     
     def _count_array_elements(self, initializer_tokens):
@@ -584,155 +501,246 @@ class ConsoTranspilerTokenBased:
         return "; ".join(c_declarations) + ";"
 
     def _process_print_from_tokens(self):
-        self._consume('prnt'); self._consume('('); arg_groups_tokens = []; current_arg_tokens = []; paren_level = 0
-        
-        # Handle empty print
+        """
+        Processes a print statement (prnt(...)) from tokens, generating
+        a C printf call with appropriate format specifiers based on argument types,
+        including handling for array elements, literals, variables, struct members,
+        function calls, and expressions (including arithmetic results).
+        Requires access to the symbol_table to determine variable/member/return types.
+        """
+        self._consume('prnt')
+        self._consume('(')
+        arg_groups_tokens = [] # List to hold lists of tokens for each argument
+        current_arg_tokens = [] # Temp list for tokens of the current argument
+        paren_level = 0 # To handle nested parentheses within arguments
+
+        # Handle empty print() case first
         if self._peek() == ')':
-            self._consume(')'); self._consume(';')
-            return 'printf("\\n"); fflush(stdout);'
-        
-        # Process arguments
+            self._consume(')')
+            self._consume(';')
+            # Return printf with an empty string and flush stdout
+            return 'printf(""); fflush(stdout);'
+
+        # Collect tokens for each argument, splitting by top-level commas
         while not (self._peek() == ')' and paren_level == 0):
-            if self._peek() is None: raise TranspilerError("Unexpected end of stream in print statement")
+            if self._peek() is None:
+                # Get line number for error reporting if possible
+                line = '?'
+                if current_arg_tokens:
+                    try: line = self._get_token_info(current_arg_tokens[-1])[2]
+                    except: pass
+                elif self.current_pos > 0:
+                     try: line = self._get_token_info(self.tokens[self.current_pos-1])[2]
+                     except: pass
+                raise TranspilerError("Unexpected end of stream in print statement", line)
+
+            # Consume the next token
             tok_type, tok_val, token_full = self._consume()
-            
+
+            # Track parenthesis level to correctly identify argument boundaries
             if tok_type == '(': paren_level += 1
             elif tok_type == ')': paren_level -= 1
-            
+
+            # If we encounter a comma at the top level (paren_level == 0),
+            # it signifies the end of the current argument.
             if tok_type == ',' and paren_level == 0:
-                if current_arg_tokens: arg_groups_tokens.append(current_arg_tokens)
-                current_arg_tokens = []
-            else: 
+                if current_arg_tokens: # Add the completed argument tokens to the main list
+                    arg_groups_tokens.append(current_arg_tokens)
+                current_arg_tokens = [] # Reset for the next argument
+            else:
+                # Otherwise, add the token to the current argument being built
                 current_arg_tokens.append(token_full)
-        
-        if current_arg_tokens: arg_groups_tokens.append(current_arg_tokens)
-        self._consume(')'); self._consume(';')
-        
-        format_parts = []; c_args = []
-        
+
+        # Add the last argument's tokens after the loop finishes
+        if current_arg_tokens:
+            arg_groups_tokens.append(current_arg_tokens)
+
+        # Consume the closing parenthesis and semicolon of the prnt statement
+        self._consume(')')
+        self._consume(';')
+
+        format_parts = [] # List to store the C format specifiers (e.g., "%d", "%.2f")
+        c_args = []       # List to store the C expressions for each argument
+
+        # Process each argument group to determine format specifier and C code
         for arg_tokens in arg_groups_tokens:
-            # Convert to C expression
+            if not arg_tokens: continue # Skip if an argument group is empty for some reason
+
+            # Convert the argument's tokens into a C expression string
+            # We need token pairs (type, value) for _tokens_to_c_expression
             token_pairs = [(self._get_token_info(t)[0], self._get_token_info(t)[1]) for t in arg_tokens]
             arg_c_expr = self._tokens_to_c_expression(token_pairs)
-            
-            # Default format
-            fmt = "%d"
-            
-            # Simple case: single token
-            if len(arg_tokens) == 1:
+
+            fmt = None # Initialize format specifier for this argument
+
+            # --- Logic to determine the format specifier ('fmt') ---
+
+            # 1. Check for Array Element Access (e.g., myArr[index], myArr[i][j])
+            #    Pattern: Starts with 'id', followed by '['
+            if len(arg_tokens) >= 3 and \
+               self._get_token_info(arg_tokens[0])[0] == 'id' and \
+               self._get_token_info(arg_tokens[1])[0] == '[':
+                base_var_name = self._get_token_info(arg_tokens[0])[1]
+                # Look up the base array variable in the symbol table
+                if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                    symbol_entry = self.symbol_table.lookup(base_var_name)
+                    # Check if symbol exists and has a data type
+                    if symbol_entry and hasattr(symbol_entry, 'data_type'):
+                        var_type = symbol_entry.data_type # Get the type (nt, dbl, etc.)
+                        # Assign format specifier based on the array's base type
+                        if var_type == 'strng': fmt = "%s"
+                        elif var_type == 'dbl': fmt = "%.2f" # Use .2f for doubles
+                        elif var_type == 'chr': fmt = "%c"
+                        elif var_type == 'nt': fmt = "%d"
+                        elif var_type == 'bln': fmt = "%d" # Booleans printed as integers (0 or 1)
+                        # Add other Conso types here if needed
+
+            # 2. If not an array access, check for simple literals or single variables
+            elif len(arg_tokens) == 1:
                 arg_type, arg_val = self._get_token_info(arg_tokens[0])[:2]
-                
-                if arg_type == 'strnglit': 
-                    fmt = "%s"
-                elif arg_type == 'chrlit': 
-                    fmt = "%c"
-                elif arg_type == 'dbllit' or arg_type == 'NEGDOUBLELIT': 
-                    fmt = "%.2f"
-                elif arg_type == 'ntlit' or arg_type == 'NEGINTLIT': 
-                    fmt = "%d"
-                elif arg_type == 'blnlit': 
-                    fmt = "%d"  # Boolean as int
+
+                if arg_type == 'strnglit': fmt = "%s"
+                elif arg_type == 'chrlit': fmt = "%c"
+                elif arg_type == 'dbllit' or arg_type == 'NEGDOUBLELIT': fmt = "%.2f"
+                elif arg_type == 'ntlit' or arg_type == 'NEGINTLIT': fmt = "%d"
+                # Handle boolean literals tr/fls mapped to 1/0 in C expression, print as int
+                elif arg_type == 'blnlit': fmt = "%d"
                 elif arg_type == 'id':
-                    # Use a simpler approach for variables
+                    # It's a single variable identifier (not array access)
                     if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
                         symbol_entry = self.symbol_table.lookup(arg_val)
                         if symbol_entry:
-                            var_type = getattr(symbol_entry, 'data_type', None)
-                            if var_type == 'strng': fmt = "%s"
-                            elif var_type == 'dbl': fmt = "%.2f"
-                            elif var_type == 'chr': fmt = "%c"
-                            elif var_type == 'nt': fmt = "%d"
-                            elif var_type == 'bln': fmt = "%d"
-                            else: fmt = "%d"  # Default
-            else:
-                # Check for struct member access pattern (id.id)
-                has_struct_member = False
-                struct_member_type = None
-                
-                # Look for pattern: identifier followed by dot followed by identifier
-                for i in range(len(arg_tokens) - 2):
-                    tok1_type, tok1_val = self._get_token_info(arg_tokens[i])[:2]
-                    tok2_type, tok2_val = self._get_token_info(arg_tokens[i+1])[:2]
-                    tok3_type, tok3_val = self._get_token_info(arg_tokens[i+2])[:2]
-                    
-                    if tok1_type == 'id' and tok2_type == '.' and tok3_type == 'id':
-                        has_struct_member = True
-                        
-                        # Try to find the struct type using symbol table
-                        if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                            # First get the struct instance
-                            struct_instance = self.symbol_table.lookup(tok1_val)
-                            if struct_instance and hasattr(struct_instance, 'data_type'):
-                                # Then find the struct definition
-                                struct_def = self.symbol_table.lookup(struct_instance.data_type)
-                                if struct_def and hasattr(struct_def, 'members'):
-                                    # Look up the specific member
-                                    member = struct_def.members.get(tok3_val)
-                                    if member:
-                                        struct_member_type = member.data_type
-                
-                # Determine format based on what we found
-                if has_struct_member and struct_member_type:
-                    if struct_member_type == 'strng': 
-                        fmt = "%s"
-                    elif struct_member_type == 'dbl': 
-                        fmt = "%.2f"
-                    elif struct_member_type == 'chr': 
-                        fmt = "%c"
-                    elif struct_member_type == 'nt': 
-                        fmt = "%d"
-                    elif struct_member_type == 'bln': 
-                        fmt = "%d"
-                    
-                # If not struct member or couldn't determine type, check for other patterns
-                else:
-                    has_string = False
-                    has_double = False
-                    has_char = False
-                    has_comparison = False
-                    
-                    for token in arg_tokens:
-                        tok_type, tok_val = self._get_token_info(token)[:2]
-                        
-                        # Check token types
-                        if tok_type == 'strnglit' or tok_type == 'id' and tok_val == 'strng':
-                            has_string = True
-                        elif tok_type == 'dbllit' or tok_type == 'NEGDOUBLELIT':
-                            has_double = True
-                        elif tok_type == 'chrlit':
-                            has_char = True
-                        elif tok_type in ['<', '>', '<=', '>=', '==', '!=', '&&', '||']:
-                            has_comparison = True
-                        
-                        # Check symbol table for identifiers
-                        if tok_type == 'id' and self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                            symbol_entry = self.symbol_table.lookup(tok_val)
-                            if symbol_entry:
+                            # Check if it's NOT an array before assigning format here
+                            # (Array elements handled above)
+                            if not getattr(symbol_entry, 'is_array', False):
                                 var_type = getattr(symbol_entry, 'data_type', None)
-                                if var_type == 'strng': has_string = True
-                                elif var_type == 'dbl': has_double = True
-                                elif var_type == 'chr': has_char = True
-                    
-                    # Determine format based on what we found
-                    if has_string:
-                        fmt = "%s"
-                    elif has_char:
-                        fmt = "%c"
-                    elif has_double:
-                        fmt = "%.2f"
-                    elif has_comparison:
-                        fmt = "%d"  # Boolean result
-                    else:
-                        # Default to int for arithmetic and other expressions
-                        fmt = "%d"
-            
-            # Add format and argument
+                                if var_type == 'strng': fmt = "%s"
+                                elif var_type == 'dbl': fmt = "%.2f"
+                                elif var_type == 'chr': fmt = "%c"
+                                elif var_type == 'nt': fmt = "%d"
+                                elif var_type == 'bln': fmt = "%d"
+
+            # 3. If not handled above, check for complex expressions like
+            #    struct access, function calls, or arithmetic/logical operations.
+            else:
+                # Initialize flags for expression type detection
+                is_struct_access = False
+                is_function_call = False
+                fmt = None # Reset fmt for this block
+
+                # --- Check if the expression is primarily a comparison ---
+                # Comparisons should always result in an integer (0 or 1)
+                is_comparison = any(self._get_token_info(t)[0] in ['==', '!=', '<', '>', '<=', '>='] for t in arg_tokens)
+                if is_comparison:
+                    fmt = "%d" # Force format to integer for comparison results
+                else:
+                    # --- If not a comparison, check for Struct Member Access ---
+                    # Iterate through tokens looking for the id . id pattern
+                    for i in range(len(arg_tokens) - 2):
+                        if self._get_token_info(arg_tokens[i])[0] == 'id' and \
+                           self._get_token_info(arg_tokens[i+1])[0] == '.' and \
+                           self._get_token_info(arg_tokens[i+2])[0] == 'id':
+                            # ... (struct lookup logic as before) ...
+                            struct_var_name = self._get_token_info(arg_tokens[i])[1]
+                            member_name = self._get_token_info(arg_tokens[i+2])[1]
+                            if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                                struct_var_symbol = self.symbol_table.lookup(struct_var_name)
+                                if struct_var_symbol and hasattr(struct_var_symbol, 'data_type'):
+                                    struct_type_name = struct_var_symbol.data_type
+                                    struct_def_symbol = self.symbol_table.lookup(struct_type_name)
+                                    if struct_def_symbol and hasattr(struct_def_symbol, 'members') and hasattr(struct_def_symbol.members, 'get'):
+                                        member_symbol = struct_def_symbol.members.get(member_name)
+                                        if member_symbol and hasattr(member_symbol, 'data_type'):
+                                            member_type = member_symbol.data_type
+                                            if member_type == 'strng': fmt = "%s"
+                                            elif member_type == 'dbl': fmt = "%.2f"
+                                            elif member_type == 'chr': fmt = "%c"
+                                            elif member_type == 'nt': fmt = "%d"
+                                            elif member_type == 'bln': fmt = "%d"
+                                            is_struct_access = True
+                                            break # Found struct member type
+
+                    # --- Check for Function Call (if not struct access) ---
+                    if not is_struct_access and len(arg_tokens) >= 2 and \
+                       self._get_token_info(arg_tokens[0])[0] == 'id' and \
+                       self._get_token_info(arg_tokens[1])[0] == '(':
+                        # ... (function lookup logic as before) ...
+                        func_name = self._get_token_info(arg_tokens[0])[1]
+                        if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                            func_symbol = self.symbol_table.lookup(func_name)
+                            if func_symbol and hasattr(func_symbol, 'data_type'):
+                                return_type = func_symbol.data_type
+                                if return_type == 'strng': fmt = "%s"
+                                elif return_type == 'dbl': fmt = "%.2f"
+                                elif return_type == 'chr': fmt = "%c"
+                                elif return_type == 'nt': fmt = "%d"
+                                elif return_type == 'bln': fmt = "%d"
+                                elif return_type == 'vd':
+                                    print(f"Warning: Attempting to print result of void function '{func_name}' near line {self._get_token_info(arg_tokens[0])[2]}. Output may be unpredictable.")
+                                    fmt = None # Let it default
+                                is_function_call = True
+
+                    # --- Fallback checks if not comparison/struct/function ---
+                    if fmt is None:
+                        # Check for logical operators (results in int)
+                        has_logical_op = any(self._get_token_info(t)[0] in ['&&', '||'] for t in arg_tokens)
+                        if has_logical_op:
+                            fmt = "%d"
+                        else:
+                            # --- MODIFIED PART ---
+                            # Check the overall expression type using the helper.
+                            # This helps catch arithmetic operations resulting in double.
+                            # Need token pairs (type, value) for get_expression_type
+                            arg_token_pairs = [(self._get_token_info(t)[0], self._get_token_info(t)[1]) for t in arg_tokens]
+                            expression_result_type = self.get_expression_type(arg_token_pairs)
+
+                            if expression_result_type == 'dbl':
+                                fmt = "%.2f"
+                            # Add elif for other potential result types if needed
+                            # elif expression_result_type == 'strng':
+                            #    fmt = "%s" # e.g., for string concatenation if supported
+                            # --- END MODIFIED PART ---
+
+
+            # 4. Default format specifier if none of the above matched
+            if fmt is None:
+                # If the type is still unknown after all checks, default to integer.
+                # This might happen for complex arithmetic resulting in int, or errors.
+                fmt = "%d"
+
+            # Add the determined format specifier and the C expression to our lists
             format_parts.append(fmt)
             c_args.append(arg_c_expr)
+
+        # Construct the final printf statement
+        format_str = " ".join(format_parts) # Join format specifiers with spaces
+        # Join C arguments with commas
+        args_str = ", ".join(c_args)
+
+        # Ensure there's always a format string, even if empty
+        if not format_str and not args_str:
+             # Handle case like prnt(); -> printf("");
+             return 'printf(""); fflush(stdout);'
+        elif not args_str:
+             # Handle case like prnt("Literal"); -> printf("Literal");
+             # Assumes single literal was handled correctly by section #2.
+             return f'printf("{format_str}"); fflush(stdout);' # format_str should be %s etc.
+        else:
+             # Normal case with format specifiers and arguments
+             return f'printf("{format_str}", {args_str}); fflush(stdout);'
+
+    # Helper method to check if a variable is a string
+    def _is_string_var(self, token):
+        """Check if a token represents a string variable"""
+        token_type, token_value = self._get_token_info(token)[:2]
+        if token_type != 'id':
+            return False
         
-        # Generate printf statement
-        format_str = " ".join(format_parts) + "\\n"
-        return f'printf("{format_str}", {", ".join(c_args)}); fflush(stdout);'
+        if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+            symbol = self.symbol_table.lookup(token_value)
+            return symbol and getattr(symbol, 'data_type', None) == 'strng'
+        
+        return False
 
     def _process_input_from_tokens(self):
         """Process input statement (varname = npt("prompt");) with type-based handling"""
@@ -888,42 +896,278 @@ class ConsoTranspilerTokenBased:
         self._consume(';')
         return self._tokens_to_c_expression(stmt_tokens) + ";"
 
+        # --- Helper Methods for Expression Processing (with Debugging) ---
+
+    def format_token(self, tok_type, tok_val):
+        """Formats a single token into its C string representation."""
+        if tok_type == 'blnlit': return self.bool_mapping.get(tok_val, '0')
+        elif tok_type == 'strnglit': return f'"{tok_val}"'
+        elif tok_type == 'chrlit': return f"'{tok_val}'"
+        else: return str(tok_val)
+
+    def get_expression_type(self, expr_tokens):
+        """
+        Determines the resulting C type of an expression represented by tokens.
+        Prioritizes operator type over initial operand type.
+        Relies on symbol table lookup. Includes DEBUG prints.
+        """
+        print(f"[DEBUG get_expression_type] Input tokens: {expr_tokens}") # DEBUG
+        if not expr_tokens:
+            print("[DEBUG get_expression_type] Returning: None (empty tokens)") # DEBUG
+            return None
+
+        result_type = None # Initialize result type
+
+        # --- Operator-based type determination FIRST ---
+        is_comparison_or_logical = any(
+            t[0] in ['==', '!=', '<', '>', '<=', '>=', '&&', '||']
+            for t in expr_tokens
+        )
+        if is_comparison_or_logical:
+            result_type = 'bln' # Result is always boolean (represented as int 0 or 1)
+        else:
+            # Check for arithmetic operations -> result type depends on operands
+            has_arithmetic_op = any(t[0] in ['+', '-', '*', '/'] for t in expr_tokens)
+            if has_arithmetic_op:
+                promotes_to_double = False
+                for tok_type, tok_val in expr_tokens:
+                    if tok_type in ['dbllit', 'NEGDOUBLELIT', '/']:
+                        promotes_to_double = True; break
+                    if tok_type == 'id':
+                        if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                            symbol = self.symbol_table.lookup(tok_val)
+                            if symbol and getattr(symbol, 'data_type', None) == 'dbl':
+                                promotes_to_double = True; break
+                result_type = 'dbl' if promotes_to_double else 'nt'
+
+        # --- If no operators determined the type, check structure ---
+        if result_type is None:
+            if len(expr_tokens) == 1:
+                tok_type, tok_val = expr_tokens[0]
+                if tok_type == 'strnglit': result_type = 'strng'
+                elif tok_type == 'chrlit': result_type = 'chr'
+                elif tok_type in ['dbllit', 'NEGDOUBLELIT']: result_type = 'dbl'
+                elif tok_type in ['ntlit', 'NEGINTLIT']: result_type = 'nt'
+                elif tok_type == 'blnlit': result_type = 'bln'
+                elif tok_type == 'id':
+                    if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                        symbol = self.symbol_table.lookup(tok_val)
+                        result_type = getattr(symbol, 'data_type', None) if symbol else None
+            # Check complex structures (heuristics)
+            elif len(expr_tokens) >= 3 and expr_tokens[0][0] == 'id' and expr_tokens[1][0] == '[' and expr_tokens[-1][0] == ']':
+                 base_var_name = expr_tokens[0][1]
+                 if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                     symbol = self.symbol_table.lookup(base_var_name)
+                     result_type = getattr(symbol, 'data_type', None) if symbol else None
+            elif len(expr_tokens) >= 3 and expr_tokens[-1][0] == 'id' and expr_tokens[-2][0] == '.':
+                 if len(expr_tokens) == 3 and expr_tokens[0][0] == 'id': # Simple id.id
+                     struct_var_name = expr_tokens[0][1]
+                     member_name = expr_tokens[-1][1]
+                     if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                         struct_var_symbol = self.symbol_table.lookup(struct_var_name)
+                         if struct_var_symbol and hasattr(struct_var_symbol, 'data_type'):
+                             struct_type_name = struct_var_symbol.data_type
+                             struct_def_symbol = self.symbol_table.lookup(struct_type_name)
+                             if struct_def_symbol and hasattr(struct_def_symbol, 'members') and hasattr(struct_def_symbol.members, 'get'):
+                                 member_symbol = struct_def_symbol.members.get(member_name)
+                                 if member_symbol: result_type = getattr(member_symbol, 'data_type', None)
+            elif len(expr_tokens) >= 3 and expr_tokens[0][0] == 'id' and expr_tokens[1][0] == '(' and expr_tokens[-1][0] == ')':
+                 func_name = expr_tokens[0][1]
+                 if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                     symbol = self.symbol_table.lookup(func_name)
+                     result_type = getattr(symbol, 'data_type', None) if symbol else None
+
+        print(f"[DEBUG get_expression_type] Returning type: {result_type}") # DEBUG
+        return result_type
+
+    def _format_token_sequence(self, tokens_to_format):
+        """Helper to format a sequence of tokens into C code with spacing."""
+        parts = []
+        if not tokens_to_format: return ""
+        for i, (tok_type, tok_val) in enumerate(tokens_to_format):
+             needs_space = False
+             if parts:
+                 last_part = parts[-1]
+                 if tok_type not in [')', ']', '.', ';', ',', '(', '[', '++', '--'] and \
+                    not last_part.endswith(('(', '[', '.')) and \
+                    tok_type != '.':
+                      if not ((last_part.isalnum() or last_part.endswith((')', ']'))) and tok_type in ['(', '[']):
+                           if not (tok_type in ['++', '--'] and last_part.isalnum()):
+                                needs_space = True
+             if needs_space: parts.append(" ")
+             parts.append(self.format_token(tok_type, tok_val))
+        return "".join(parts)
+
+    def _process_comparison_segment(self, segment_tokens):
+        """
+        Processes a segment of tokens (typically between logical operators)
+        to handle comparisons, especially string comparisons using strcmp.
+        """
+        if not segment_tokens: return ""
+        comparison_index = -1
+        paren_level = 0
+        bracket_level = 0
+        comparison_ops = ['==', '!=', '<', '>', '<=', '>=']
+        for idx, (tok_type, _) in enumerate(segment_tokens):
+            if tok_type == '(': paren_level += 1
+            elif tok_type == ')': paren_level -= 1
+            elif tok_type == '[': bracket_level += 1
+            elif tok_type == ']': bracket_level -= 1
+            elif paren_level == 0 and bracket_level == 0 and tok_type in comparison_ops:
+                comparison_index = idx
+                break
+        if comparison_index != -1:
+            op_tok_type = segment_tokens[comparison_index][0]
+            left_operand_tokens = segment_tokens[:comparison_index]
+            right_operand_tokens = segment_tokens[comparison_index + 1:]
+            left_type = self.get_expression_type(left_operand_tokens)
+            right_type = self.get_expression_type(right_operand_tokens)
+            if left_type == 'strng' and right_type == 'strng' and op_tok_type in ['==', '!=']:
+                left_c = self._tokens_to_c_expression(left_operand_tokens)
+                right_c = self._tokens_to_c_expression(right_operand_tokens)
+                op_str = "==" if op_tok_type == '==' else "!="
+                return f"(strcmp({left_c}, {right_c}) {op_str} 0)"
+            else:
+                left_c = self._tokens_to_c_expression(left_operand_tokens)
+                right_c = self._tokens_to_c_expression(right_operand_tokens)
+                if left_c and right_c: return f"{left_c} {op_tok_type} {right_c}"
+                elif left_c: return f"{left_c} {op_tok_type}"
+                elif right_c: return f"{op_tok_type} {right_c}"
+                else: return f"{op_tok_type}"
+        else:
+            return self._format_token_sequence(segment_tokens)
+
     def _tokens_to_c_expression(self, tokens):
-        """Converts a list of (type, value) tokens into a C expression string."""
-        # Improved version to handle spacing better
-        c_parts = []; last_token_type = None
-        for tok_type, tok_value in tokens:
-            needs_space = False
-            if c_parts: # Check if not the first token
-                # Conditions for NOT adding a space
-                no_space_before = [')', ']', '.', ';', ',', '++', '--']
-                no_space_after = ['(', '[', '.', '~'] # '~' for negative numbers
-                if last_token_type not in no_space_after and tok_type not in no_space_before:
-                    # Special case: id followed by ( is function call, no space
-                    if not(last_token_type == 'id' and tok_type == '('):
-                         needs_space = True
+        """
+        Converts a list of (type, value) tokens into a C expression string.
+        Handles operator precedence by splitting first by logical operators (&&, ||),
+        then processing segments for comparisons (==, != with strcmp for strings),
+        and finally formatting the remaining tokens.
+        """
+        if not tokens: return ""
+        segments = []; operators = []; current_start = 0
+        paren_level = 0; bracket_level = 0
+        for i, (tok_type, _) in enumerate(tokens):
+            if tok_type == '(': paren_level += 1
+            elif tok_type == ')': paren_level -= 1
+            elif tok_type == '[': bracket_level += 1
+            elif tok_type == ']': bracket_level -= 1
+            elif paren_level == 0 and bracket_level == 0 and tok_type in ['&&', '||']:
+                segments.append(tokens[current_start:i])
+                operators.append(tok_type)
+                current_start = i + 1
+        segments.append(tokens[current_start:])
+        processed_segments = [self._process_comparison_segment(segment) for segment in segments]
+        result_parts = [processed_segments[0]]
+        for i, op in enumerate(operators):
+            result_parts.append(f" {op} ")
+            result_parts.append(processed_segments[i+1])
+        result = "".join(result_parts)
+        result = self._replace_bool_literals(result)
+        return result
 
-            if needs_space: c_parts.append(" ")
+    def _replace_bool_literals(self, text):
+        """Replaces whole-word 'tr' and 'fls' with '1' and '0'."""
+        import re
+        text = re.sub(r'\btr\b', '1', text)
+        text = re.sub(r'\bfls\b', '0', text)
+        return text
 
-            # Append C equivalent of token value
-            if tok_type == 'blnlit': c_parts.append(self.bool_mapping.get(tok_value, '0'))
-            elif tok_type == 'strnglit': c_parts.append(f'"{tok_value}"')
-            elif tok_type == 'chrlit': c_parts.append(f"'{tok_value}'")
-            # Map Conso keywords only if they are actual keywords, not just values
-            elif tok_value in self.keyword_mapping: c_parts.append(self.keyword_mapping[tok_value])
-            else: c_parts.append(str(tok_value)) # Default: use value directly
-            last_token_type = tok_type
+    # --- Print Processing (with Debugging) ---
 
-        expr = "".join(c_parts)
-        # Replace boolean literals again as whole words
-        expr = self._replace_bool_literals(expr)
-        # String comparison logic removed - should be handled by parser/semantic analysis
-        return expr
+    def _process_print_from_tokens(self):
+        """
+        Processes a print statement (prnt(...)) from tokens, generating
+        a C printf call with appropriate format specifiers based on argument types.
+        Relies on get_expression_type to determine the resulting type for format selection.
+        Includes DEBUG prints.
+        """
+        self._consume('prnt')
+        self._consume('(')
+        arg_groups_tokens = []
+        current_arg_tokens = []
+        paren_level = 0
 
+        if self._peek() == ')':
+            self._consume(')')
+            self._consume(';')
+            return 'printf(""); fflush(stdout);'
+
+        while not (self._peek() == ')' and paren_level == 0):
+            if self._peek() is None:
+                line = '?'
+                if current_arg_tokens: 
+                    try: line = self._get_token_info(current_arg_tokens[-1])[2]
+                    except: pass
+                elif self.current_pos > 0: 
+                    try: line = self._get_token_info(self.tokens[self.current_pos-1])[2]
+                    except: pass
+                raise TranspilerError("Unexpected end of stream in print statement", line)
+
+            tok_type, tok_val, token_full = self._consume()
+            if tok_type == '(': paren_level += 1
+            elif tok_type == ')': paren_level -= 1
+
+            if tok_type == ',' and paren_level == 0:
+                if current_arg_tokens: arg_groups_tokens.append(current_arg_tokens)
+                current_arg_tokens = []
+            else:
+                current_arg_tokens.append(token_full)
+
+        if current_arg_tokens: arg_groups_tokens.append(current_arg_tokens)
+        self._consume(')')
+        self._consume(';')
+
+        format_parts = []
+        c_args = []
+
+        for arg_tokens in arg_groups_tokens:
+            if not arg_tokens: continue
+
+            print(f"\n[DEBUG _process_print] Processing arg tokens: {arg_tokens}") # DEBUG
+
+            token_pairs = [(self._get_token_info(t)[0], self._get_token_info(t)[1]) for t in arg_tokens]
+            arg_c_expr = self._tokens_to_c_expression(token_pairs)
+
+            fmt = None
+
+            # --- Universal Type Checking using get_expression_type ---
+            expression_result_type = self.get_expression_type(token_pairs)
+            print(f"[DEBUG _process_print] Determined type: {expression_result_type}") # DEBUG
+
+            if expression_result_type == 'dbl':
+                fmt = "%.2f"
+            elif expression_result_type == 'strng':
+                fmt = "%s"
+            elif expression_result_type == 'chr':
+                fmt = "%c"
+            elif expression_result_type == 'nt':
+                fmt = "%d"
+            elif expression_result_type == 'bln':
+                fmt = "%d" # Boolean results printed as integers
+
+            # --- Default format specifier ---
+            if fmt is None:
+                line_num = self._get_token_info(arg_tokens[0])[2] if arg_tokens else '?'
+                print(f"Warning: Could not determine print format for expression near line {line_num}. Defaulting to %d.")
+                fmt = "%d"
+
+            print(f"[DEBUG _process_print] Final format specifier: {fmt}") # DEBUG
+            format_parts.append(fmt)
+            c_args.append(arg_c_expr)
+
+        # Construct the final printf statement
+        format_str = " ".join(format_parts)
+        args_str = ", ".join(c_args)
+
+        if not format_str and not args_str: return 'printf(""); fflush(stdout);'
+        elif not args_str: return f'printf("{format_str}"); fflush(stdout);'
+        else: return f'printf("{format_str}", {args_str}); fflush(stdout);'
 
     # --- Helper Methods ---
     def _indent(self, level): return "    " * max(0, level)
-    def _generate_headers(self): return ("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n#include <stddef.h>\n\n")
+    def _generate_headers(self):
+        return ("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n#include <stddef.h>\n\n")
     def _generate_helper_functions(self): return """// Helper function for string input
 char* conso_input(const char* prompt) { printf("%s", prompt); fflush(stdout); char buffer[1024]; char* line = NULL; size_t cl = 0; size_t bl = sizeof(buffer); if (fgets(buffer, bl, stdin) == NULL) { if (feof(stdin)) return NULL; fprintf(stderr, "Input Error\\n"); exit(1); } cl = strlen(buffer); if (cl > 0 && buffer[cl - 1] == '\\n') { buffer[cl - 1] = '\\0'; cl--; } line = malloc(cl + 1); if (line == NULL) { fprintf(stderr, "Malloc Error\\n"); exit(1); } strcpy(line, buffer); return line; }
 // Helper function for string concatenation
@@ -1021,7 +1265,7 @@ if __name__ == "__main__":
         ('end', 'end', 15, 7), (';', ';', 15, 10),
         # ('}', '}', 16, 1) # No closing brace for mn if using end;
     ]
-
+      
 
     print("--- Transpiling User's Conso Code from Tokens ---")
     # Pass None for symbol_table for now
