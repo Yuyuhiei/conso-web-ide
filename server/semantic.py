@@ -46,12 +46,16 @@ class FunctionSymbol(Symbol):
         super().__init__(name, 'function', return_type, True, False, False, None, None, line, column)
         self.parameters = parameters or []
         self.has_return_statement = False  # Track if function has a return statement
+        # ADDED: To store start index of function body tokens (index AFTER '{')
+        self.body_start_index = None
 
     def __str__(self):
         params = [f"{param.data_type} {param.name}" for param in self.parameters]
         params_str = ", ".join(params)
         location = f"(line {self.line}, col {self.column})" if self.line and self.column else ""
-        return f"{self.name}: {self.type} returns {self.data_type} ({params_str}) {location}"
+        # Indicate if body start index is set (for debugging)
+        body_info = f" [Body Start Idx: {self.body_start_index}]" if self.body_start_index is not None else ""
+        return f"{self.name}: {self.type} returns {self.data_type} ({params_str}) {location}{body_info}"
 
 # Add this class after FunctionSymbol
 class StructSymbol(Symbol):
@@ -77,10 +81,31 @@ class SymbolTable:
         return True
 
     def lookup(self, name):
+        # First check in current scope
         if name in self.symbols:
             return self.symbols[name]
+        
+        # If not found in current scope and this is a function scope,
+        # check directly in global scope (skip any intermediate scopes)
+        if self.scope_name.startswith("function "):
+            # We're in a function scope, check global scope directly
+            global_scope = None
+            
+            # Find the global scope
+            temp_scope = self
+            while temp_scope.parent:
+                temp_scope = temp_scope.parent
+            global_scope = temp_scope
+            
+            # Check in global scope
+            if name in global_scope.symbols:
+                print(f"Found '{name}' in global scope from function scope '{self.scope_name}'")
+                return global_scope.symbols[name]
+        
+        # Normal parent lookup
         if self.parent:
             return self.parent.lookup(name)
+        
         return None
 
     def print_table(self, indent=0):
@@ -147,19 +172,119 @@ class SemanticAnalyzer:
                 print(f"\n=== Symbol Table: {func_scope.scope_name} ===")
                 func_scope.print_table(indent=1)
             
+    # --- Modified collect_declarations ---
     def collect_declarations(self):
-        """First pass to collect all function and struct declarations"""
-        print("Collecting declarations...")
-        
-        while self.current_token_index < len(self.token_stream):
-            token_type, token_value, line, column = self.token_stream[self.current_token_index]
-            
+        """First pass: Collect struct definitions and function signatures (including main)."""
+        print("Collecting declarations (Pass 1)...")
+        original_index = self.current_token_index # Save entry index (usually 0)
+        temp_index = 0 # Use a temporary index to scan the entire stream
+
+        while temp_index < len(self.token_stream):
+            # Set current_token_index temporarily for analysis functions
+            self.current_token_index = temp_index
+            token_type, token_value, line, column = self.get_current_token()
+
             if token_type == 'fnctn':
-                self.analyze_function_declaration()
+                func_name = "unknown"
+                if temp_index + 2 < len(self.token_stream):
+                     name_token = self.token_stream[temp_index + 2]
+                     if name_token[0] == 'id': func_name = name_token[1]
+                print(f"Pass 1: Found 'fnctn' for '{func_name}' at index {temp_index}.")
+                self.analyze_function_declaration(is_first_pass=True)
+                temp_index = self.current_token_index
+                print(f"Pass 1: After skipping '{func_name}', temp_index is now {temp_index}.")
+                continue
+
             elif token_type == 'strct':
+                struct_name = "unknown"
+                if temp_index + 1 < len(self.token_stream):
+                     name_token = self.token_stream[temp_index + 1]
+                     if name_token[0] == 'id': struct_name = name_token[1]
+                print(f"Pass 1: Found 'strct' for '{struct_name}' at index {temp_index}.")
                 self.analyze_struct_declaration()
-            else:
-                self.advance()
+                temp_index = self.current_token_index
+                print(f"Pass 1: After processing '{struct_name}', temp_index is now {temp_index}.")
+                continue
+
+            # --- ADDED: Handle 'mn' signature collection in Pass 1 ---
+            elif token_type == 'mn':
+                print(f"Pass 1: Found 'mn' function declaration at index {temp_index}.")
+                mn_line, mn_col = line, column
+                # --- Start: Skipping mn() { signature ---
+                # We need to advance self.current_token_index to find body start
+                # and then update temp_index to after the skipped body
+                saved_scan_index = self.current_token_index # Save index at 'mn'
+                self.advance() # Past 'mn'
+
+                # Check syntax: mn() {
+                if self.current_token_index >= len(self.token_stream) or self.get_current_token()[0] != '(':
+                     raise SemanticError("Expected '(' after 'mn'", self.get_current_token()[2], self.get_current_token()[3])
+                self.advance() # Past '('
+                if self.current_token_index >= len(self.token_stream) or self.get_current_token()[0] != ')':
+                     raise SemanticError("Expected ')' after '(' in 'mn'", self.get_current_token()[2], self.get_current_token()[3])
+                self.advance() # Past ')'
+                if self.current_token_index >= len(self.token_stream) or self.get_current_token()[0] != '{':
+                     raise SemanticError("Expected '{' after 'mn()'", self.get_current_token()[2], self.get_current_token()[3])
+                body_start_index = self.current_token_index + 1 # Index after '{'
+                # --- End: Skipping mn() { signature ---
+
+                # Create symbol for mn
+                main_symbol = FunctionSymbol(
+                    name="mn",
+                    return_type="vd",
+                    parameters=[],
+                    line=mn_line,
+                    column=mn_col
+                )
+                main_symbol.body_start_index = body_start_index
+
+                # Insert into global scope
+                if not self.global_scope.insert("mn", main_symbol):
+                     # Check if already declared (should only happen once)
+                     existing = self.global_scope.lookup("mn")
+                     if existing and existing.type == 'function':
+                          raise SemanticError("'mn' function can only be declared once", mn_line, mn_col)
+                     else: # If 'mn' exists but isn't a function (e.g., variable)
+                          raise SemanticError("Symbol 'mn' already declared with a different type", mn_line, mn_col)
+                print(f"Pass 1: Added 'mn' symbol to global scope.")
+
+                # Create and store scope for mn
+                if "mn" not in self.function_scopes:
+                     main_scope = SymbolTable(parent=self.global_scope, scope_name="function mn")
+                     self.function_scopes["mn"] = main_scope
+                     print(f"Pass 1: Created scope for 'mn'.")
+                else:
+                     # This case should ideally not happen if mn can only be declared once
+                     print(f"Warning: Scope for 'mn' already existed in self.function_scopes during Pass 1.")
+                     pass # Or raise error?
+
+                # Skip body (self.current_token_index is at '{')
+                self.advance() # Past '{'
+                brace_count = 1
+                while brace_count > 0 and self.current_token_index < len(self.token_stream):
+                    t_type = self.get_current_token()[0]
+                    if t_type == '{': brace_count += 1
+                    elif t_type == '}': brace_count -= 1
+                    if brace_count > 0: self.advance() # Avoid advancing past the final '}'
+
+                # Now at final '}' or end of stream
+                if self.current_token_index < len(self.token_stream) and self.get_current_token()[0] == '}':
+                     self.advance() # Past '}'
+                else: # Reached end of stream without closing brace
+                     raise SemanticError("Unclosed body for 'mn'", line, column) # Use line/col of '{' maybe?
+
+                # Update the main loop index (temp_index) to where we ended up
+                temp_index = self.current_token_index
+                print(f"Pass 1: After skipping 'mn' body, temp_index is now {temp_index}.")
+                continue # Skip default temp_index increment
+            # --- End 'mn' handling ---
+
+            # If not a function or struct or main, just move to the next token
+            temp_index += 1
+
+        # Restore the original token index before starting pass 2
+        self.current_token_index = original_index
+        print("Finished collecting declarations (Pass 1).")
                 
     def skip_function_declaration(self):
         """Skip past a function declaration and body"""
@@ -229,116 +354,138 @@ class SemanticAnalyzer:
         if self.get_current_token()[0] == ';':
             self.advance()
     
-    # Update the analyze_function_declaration method
-    def analyze_function_declaration(self):
-        """Analyze function declaration, parameters, and body"""
+    # --- Modified analyze_function_declaration ---
+    def analyze_function_declaration(self, is_first_pass=True):
+        """
+        Analyzes 'fnctn' declaration.
+        Pass 1: Collects signature, creates scope, stores body start index, skips body.
+        Pass 2: Retrieves symbol/scope, analyzes body.
+        """
         # Ensure we're starting with 'fnctn' keyword
-        token_type, token_value, line, column = self.get_current_token()
+        token_type, _, line_fn, col_fn = self.get_current_token() # Line/col of 'fnctn'
         if token_type != 'fnctn':
-            raise SemanticError(f"Expected 'fnctn' keyword, got '{token_type}'", line, column)
-        
+             raise SemanticError(f"Expected 'fnctn' keyword, got '{token_type}'", line_fn, col_fn)
+
         self.advance()  # Move past 'fnctn'
-        
+
         # Check for return type
-        token_type, token_value, line, column = self.get_current_token()
+        token_type, _, line_ret, col_ret = self.get_current_token()
         return_type = None
-        
-        # Check if it's a void function
         if token_type == 'vd':
             return_type = 'vd'
-            self.advance()  # Move past 'vd'
+            self.advance()
         elif token_type in self.data_types:
             return_type = token_type
-            self.advance()  # Move past the return type
+            self.advance()
         else:
-            raise SemanticError(f"Expected return type or 'vd', got '{token_type}'", line, column)
-        
+            raise SemanticError(f"Expected return type or 'vd', got '{token_type}'", line_ret, col_ret)
+
         # Get function name
-        token_type, token_value, line, column = self.get_current_token()
+        token_type, func_name, line_name, col_name = self.get_current_token()
         if token_type != 'id':
-            raise SemanticError(f"Expected function name, got '{token_type}'", line, column)
-        
-        func_name = token_value
-        
-        # Check for duplicate function
-        if self.current_scope.lookup(func_name):
-            raise SemanticError(f"Function '{func_name}' already declared", line, column)
-        
+            raise SemanticError(f"Expected function name, got '{token_type}'", line_name, col_name)
+        # --- CRITICAL: 'mn' should not be declared using 'fnctn' ---
+        if func_name == 'mn':
+            raise SemanticError(f"'mn' is a reserved keyword and cannot be used as a function name here. Use 'mn()' syntax.", line_name, col_name)
+        # --- End Check ---
+
         self.advance()  # Move past function name
-        
-        # Process opening parenthesis
-        token_type, token_value, line, column = self.get_current_token()
+
+        # Process opening parenthesis for parameters
+        token_type, _, line_paren1, col_paren1 = self.get_current_token()
         if token_type != '(':
-            raise SemanticError(f"Expected '(' after function name, got '{token_type}'", line, column)
-        
-        self.advance()  # Move past '('
-        
+            raise SemanticError(f"Expected '(' after function name, got '{token_type}'", line_paren1, col_paren1)
+        self.advance()
+
         # Parse parameters
         parameters = []
-        
-        # Check if there are parameters
         if self.get_current_token()[0] != ')':
-            # Parse first parameter
             self.parse_parameter(parameters)
-            
-            # Parse additional parameters
             while self.get_current_token()[0] == ',':
-                self.advance()  # Move past comma
+                self.advance()
                 self.parse_parameter(parameters)
-        
+
         # Check for closing parenthesis
-        token_type, token_value, line, column = self.get_current_token()
+        token_type, _, line_paren2, col_paren2 = self.get_current_token()
         if token_type != ')':
-            raise SemanticError(f"Expected ')' after parameters, got '{token_type}'", line, column)
-        
-        self.advance()  # Move past ')'
-        
-        # Create function symbol
-        func_symbol = FunctionSymbol(
-            name=func_name,
-            return_type=return_type,
-            parameters=parameters,
-            line=line,
-            column=column
-        )
-        
-        # Add function to global scope
-        if not self.global_scope.insert(func_name, func_symbol):
-            raise SemanticError(f"Function '{func_name}' already declared", line, column)
-        
-        # Debug output to verify function is added to global scope
-        print(f"Added function '{func_name}' to global scope with return type '{return_type}'")
-        
-        # Create new scope for function
-        function_scope = SymbolTable(parent=self.global_scope, scope_name=f"function {func_name}")
-        
-        # Add parameters to function scope
-        for param in parameters:
-            function_scope.insert(param.name, param)
-        
-        # Save the old scope and set current scope to function scope
-        old_scope = self.current_scope
-        self.current_scope = function_scope
-        
-        # Process opening brace
-        token_type, token_value, line, column = self.get_current_token()
+            raise SemanticError(f"Expected ')' after parameters, got '{token_type}'", line_paren2, col_paren2)
+        self.advance()
+
+        # --- Symbol and Scope Handling (Pass 1 vs Pass 2) ---
+        func_symbol = None
+        function_scope = None
+
+        if is_first_pass:
+            # Pass 1: Create symbol, add to global scope, create function scope
+            func_symbol = FunctionSymbol(
+                name=func_name,
+                return_type=return_type,
+                parameters=parameters,
+                line=line_name, # Use line/col of function name for symbol
+                column=col_name
+            )
+            if not self.global_scope.insert(func_name, func_symbol):
+                 existing = self.global_scope.lookup(func_name)
+                 if existing and existing.type == 'function':
+                     raise SemanticError(f"Function '{func_name}' already declared", line_name, col_name)
+                 else:
+                     raise SemanticError(f"Symbol '{func_name}' already declared with a different type", line_name, col_name)
+            else:
+                 print(f"Pass 1: Added function '{func_name}' symbol to global scope.")
+
+            # Create and store function scope
+            function_scope = SymbolTable(parent=self.global_scope, scope_name=f"function {func_name}")
+            for param in parameters:
+                if not function_scope.insert(param.name, param):
+                     param_line, param_col = param.line, param.column
+                     raise SemanticError(f"Duplicate parameter name '{param.name}' in function '{func_name}'", param_line, param_col)
+            self.function_scopes[func_name] = function_scope
+            print(f"Pass 1: Created scope for function '{func_name}'.")
+
+        else:
+            # Pass 2: Retrieve existing symbol and scope
+            func_symbol = self.global_scope.lookup(func_name)
+            if not func_symbol or func_symbol.type != 'function':
+                 raise SemanticError(f"Internal Error: Function symbol for '{func_name}' not found during pass 2", line_name, col_name)
+            if func_name not in self.function_scopes:
+                 raise SemanticError(f"Internal Error: Function scope for '{func_name}' not found during pass 2", line_name, col_name)
+            function_scope = self.function_scopes[func_name]
+            print(f"Pass 2: Retrieved symbol and scope for function '{func_name}'.")
+
+
+        # Process opening brace for function body
+        token_type, _, brace_line, brace_column = self.get_current_token()
         if token_type != '{':
-            raise SemanticError(f"Expected '{{' to start function body, got '{token_type}'", line, column)
-        
-        self.advance()  # Move past '{'
-        
-        # Process function body
-        has_return = self.analyze_function_body(return_type)
-        
-        # Check if non-void function has return statement
-        if return_type != 'vd' and not has_return:
-            raise SemanticError(f"Function '{func_name}' with return type '{return_type}' must have a return statement", line, column)
-        
-        # Update function symbol with return statement information
-        func_symbol.has_return_statement = has_return
-        
-        # Restore original scope
-        self.current_scope = old_scope
+            raise SemanticError(f"Expected '{{' to start function body, got '{token_type}'", brace_line, brace_column)
+
+        if is_first_pass:
+            # Pass 1: Store body start index and skip the body
+            func_symbol.body_start_index = self.current_token_index + 1 # Store index AFTER '{'
+            print(f"Pass 1: Stored body start index {func_symbol.body_start_index} for '{func_name}'. Skipping body.")
+            self.advance() # Move past '{'
+            brace_count = 1
+            while brace_count > 0 and self.current_token_index < len(self.token_stream):
+                token_type = self.get_current_token()[0]
+                if token_type == '{': brace_count += 1
+                elif token_type == '}': brace_count -= 1
+                if brace_count > 0: self.advance()
+            if self.get_current_token()[0] == '}': self.advance() # Move past the final '}'
+            else: raise SemanticError(f"Unclosed function body for '{func_name}'", brace_line, brace_column)
+            print(f"Pass 1: Finished skipping body for '{func_name}'. Current index: {self.current_token_index}")
+
+        else:
+            # Pass 2: Analyze the body now
+            print(f"Pass 2: Analyzing body for '{func_name}' starting at index {self.current_token_index + 1}.")
+            self.advance() # Move past '{'
+            old_scope = self.current_scope
+            self.current_scope = function_scope # Switch to function's scope
+            has_return = self.analyze_function_body(return_type)
+            if return_type != 'vd' and not has_return:
+                 raise SemanticError(f"Function '{func_name}' with return type '{return_type}' must have a return statement",
+                                     func_symbol.line, func_symbol.column)
+            func_symbol.has_return_statement = has_return
+            self.current_scope = old_scope
+            print(f"Pass 2: Finished analyzing body for '{func_name}'. Current index: {self.current_token_index}")
 
     def parse_parameter(self, parameters):
         """Parse a single function parameter and add it to the parameters list"""
@@ -1103,184 +1250,345 @@ class SemanticAnalyzer:
         member_symbol = struct_symbol.members[member_name]
         return member_symbol.data_type
             
+    # --- Modified analyze_main_function ---
     def analyze_main_function(self):
-        """Analyze the main function"""
-        token_type, token_value, line, column = self.get_current_token()
-        if token_type != 'mn':
-            raise SemanticError(f"Expected 'mn' keyword, got '{token_type}'", line, column)
-            
-        self.advance()  # Move past 'mn'
-        
-        # Process opening parenthesis
-        token_type, token_value, line, column = self.get_current_token()
-        if token_type != '(':
-            raise SemanticError(f"Expected '(' after 'mn', got '{token_type}'", line, column)
-            
-        self.advance()  # Move past '('
-        
-        # Check for closing parenthesis
-        token_type, token_value, line, column = self.get_current_token()
-        if token_type != ')':
-            raise SemanticError(f"Expected ')' after '(', got '{token_type}'", line, column)
-            
-        self.advance()  # Move past ')'
-        
-        # Create main function symbol
-        main_symbol = FunctionSymbol(
-            name="mn",
-            return_type="vd",  # Main returns void
-            parameters=[],  # Main has no parameters
-            line=line,
-            column=column
-        )
-        
-        # Add main function to global scope
-        self.global_scope.insert("mn", main_symbol)
-        
-        # Create new scope for main function
-        main_scope = SymbolTable(parent=self.global_scope, scope_name="function mn")
-        
-        # Save the old scope and set current scope to main scope
-        old_scope = self.current_scope
-        self.current_scope = main_scope
-        
-        # Process opening brace
-        token_type, token_value, line, column = self.get_current_token()
-        if token_type != '{':
-            raise SemanticError(f"Expected '{{' to start main function body, got '{token_type}'", line, column)
-            
-        self.advance()  # Move past '{'
-        
-        print(f"Starting to process main function body in scope '{self.current_scope.scope_name}'")
+        """Analyze the main function BODY ('mn'). Assumes called during Pass 2."""
+        # Assumes current token is 'mn'
+        mn_line, mn_col = self.get_current_token()[2], self.get_current_token()[3]
 
-        # Save old context and ensure we're not in a loop or switch context
+        # --- Retrieve symbol and scope created in Pass 1 ---
+        main_symbol = self.global_scope.lookup("mn")
+        if not main_symbol or main_symbol.type != 'function':
+             raise SemanticError("Internal Error: Main function 'mn' symbol not found or invalid during pass 2", mn_line, mn_col)
+
+        if "mn" not in self.function_scopes:
+            raise SemanticError("Internal Error: Main function scope for 'mn' not found during pass 2", mn_line, mn_col)
+        main_scope = self.function_scopes["mn"]
+        # --- End retrieval ---
+
+        # --- Skip signature part mn() ---
+        self.advance() # Past 'mn'
+        if self.current_token_index >= len(self.token_stream) or self.get_current_token()[0] != '(':
+             raise SemanticError("Expected '(' after 'mn'", self.get_current_token()[2], self.get_current_token()[3])
+        self.advance() # Past '('
+        if self.current_token_index >= len(self.token_stream) or self.get_current_token()[0] != ')':
+             raise SemanticError("Expected ')' after '(' in 'mn'", self.get_current_token()[2], self.get_current_token()[3])
+        self.advance() # Past ')'
+        # --- End skipping signature ---
+
+        # --- Analyze Body ---
+        old_scope = self.current_scope
+        self.current_scope = main_scope # Switch to main's scope
+
+        # Process opening brace
+        token_type, _, brace_line, brace_column = self.get_current_token()
+        if token_type != '{':
+            raise SemanticError(f"Expected '{{' to start main function body, got '{token_type}'", brace_line, brace_column)
+        self.advance()  # Move past '{'
+
+        print(f"Pass 2: Starting to process main function body in scope '{self.current_scope.scope_name}'")
+
+        # Save old context flags
         old_in_loop = self.in_loop
         old_in_switch = self.in_switch
         self.in_loop = False
         self.in_switch = False
-        
+
         # Process main function body
-        self.analyze_function_body("vd")  # Main is void
-        
-        print(f"Finished processing main function body, returning to scope '{old_scope.scope_name}'")
-        
-        # Restore old context
+        self.analyze_function_body("vd") # Pass "vd" as return type
+
+        print(f"Pass 2: Finished processing main function body, returning to scope '{old_scope.scope_name}'")
+
+        # Restore old context flags
         self.in_loop = old_in_loop
         self.in_switch = old_in_switch
 
-        # Restore original scope
-        # Store the main function's scope for later use (e.g., by the transpiler)
-        self.function_scopes["mn"] = main_scope
+        # Restore outer scope
         self.current_scope = old_scope
+        # analyze_function_body should leave us positioned after '}'
 
+    # --- Modified analyze method ---
     def analyze(self, tokens):
-        """Main entry point for semantic analysis"""
+        """Main entry point for semantic analysis (Handles Pass 1 and Pass 2)."""
         self.token_stream = tokens
         self.current_scope = self.global_scope
+        self.function_scopes = {} # Initialize/reset function scopes map
         errors = []
 
         try:
-            # First pass: collect all function declarations and struct declarations
-            self.collect_declarations()
-            
-            # Reset position to start for the main analysis
+            # --- Pass 1: Collect Declarations ---
             self.current_token_index = 0
-            self.current_scope = self.global_scope
-            
-            # Second pass: process everything
+            self.collect_declarations() # Populates global scope with signatures, stores body indices
+
+            # --- Debug Print Global Scope After Pass 1 ---
+            print("\n--- Global Scope Contents After Pass 1 ---")
+            if hasattr(self, 'global_scope') and self.global_scope:
+                 for name, symbol in self.global_scope.symbols.items():
+                      print(f"  {name}: {symbol}")
+            else:
+                 print("  Global scope not available.")
+            print("----------------------------------------")
+            # --- End Debug Print ---
+
+
+            # --- Pass 2: Full Analysis ---
+            self.current_token_index = 0
+            self.current_scope = self.global_scope # Ensure we start in global scope for pass 2
+            print("\nStarting full analysis (Pass 2)...")
+
             while self.current_token_index < len(self.token_stream):
+                start_of_loop_index = self.current_token_index
                 token_type, token_value, line, column = self.token_stream[self.current_token_index]
+                scope_name = self.current_scope.scope_name if self.current_scope else "None"
+                print(f"Pass 2 - Index: {self.current_token_index}, Token: {token_type} ('{token_value}'), Scope: {scope_name}")
 
-                # Debug output for all tokens
-                print(f"Processing token: {token_type} '{token_value}' at line {line}, column {column}") #debug statement
-                
-                # More specific debug for struct member access detection
-                if token_type == 'id':
-                    next_token = self.peek_next_token()
-                    if next_token and next_token[0] == '.':
-                        print(f"Found struct member access: {token_value}.{next_token[1]}") #debug statement
-                
-                # Skip function and struct declarations on second pass - already processed
-                if token_type == 'fnctn':
-                    self.skip_function_declaration()
-                    continue
-                elif token_type == 'strct':
+                if token_type == 'strct':
+                    print(f"Pass 2: Skipping struct definition '{self.peek_next_token()[1]}'.")
                     self.skip_struct_declaration()
+                    print(f"Pass 2: After skipping struct, index is {self.current_token_index}")
                     continue
-                
-                # Handle struct instantiation
-                elif token_type == 'dfstrct':
-                    self.analyze_struct_instantiation()
-                
-                # Handle constant declarations
-                elif token_type == 'cnst':
-                    self.analyze_constant_declaration()
-                
-                # Handle variable declarations
-                elif token_type in self.data_types:
-                    # Save the current position
-                    start_pos = self.current_token_index
-                    
-                    # Move past data type to the identifier
-                    self.advance()
-                    
-                    # Make sure we have a valid identifier
-                    if self.current_token_index >= len(self.token_stream) or self.token_stream[self.current_token_index][0] != 'id':
-                        raise SemanticError(f"Expected an identifier after '{token_type}'", line, column)
-                    
-                    # Look ahead to see if this is an array declaration
-                    next_token = self.peek_next_token()
-                    if next_token and next_token[0] == '[':
-                        # Go back to the data type token
-                        self.current_token_index = start_pos
-                        self.analyze_array_declaration()
-                    else:
-                        # Go back to the data type token
-                        self.current_token_index = start_pos
-                        self.analyze_variable_declaration()
-                
-                # Handle main function
-                elif token_type == 'mn':
-                    self.analyze_main_function()
-                
-                # Handle struct member access
-                elif token_type == 'id' and self.peek_next_token()[0] == '.':
-                    print(f"Routing to analyze_struct_member_access for {token_value}.{self.peek_next_token()[1]}") #debug statement
-                    self.analyze_struct_member_access()
-                
-                # Handle function calls
-                elif token_type == 'id' and self.peek_next_token()[0] == '(':
-                    self.analyze_function_call()
-                
-                # Handle array access or assignment
-                elif token_type == 'id' and self.peek_next_token()[0] == '[':
-                    self.analyze_array_access()
-                    
-                    # Skip to end of statement
-                    while self.current_token_index < len(self.token_stream) and self.get_current_token()[0] != ';':
-                        self.advance()
-                    self.advance()  # Move past semicolon
-                
-                # Handle regular assignments
-                elif token_type == 'id':
-                    # Check if this is an assignment
-                    next_token = self.peek_next_token()
-                    if next_token and next_token[0] == '=':
-                        self.analyze_assignment()
-                    else:
-                        # This is a variable reference (not an assignment)
-                        self.check_variable_usage(token_value, line, column)
-                        self.advance()
-                else:
-                    # Move to next token for other cases
-                    self.advance()
 
-            # Print symbol tables after analysis
+                # --- SIMPLIFIED 'fnctn' handling in Pass 2 ---
+                # Handles ONLY user-defined functions declared with 'fnctn'
+                elif token_type == 'fnctn':
+                    func_name = "unknown"
+                    name_token_idx = self.current_token_index + 2
+                    if name_token_idx < len(self.token_stream):
+                         func_name_token = self.token_stream[name_token_idx]
+                         if func_name_token[0] == 'id': func_name = func_name_token[1]
+                    print(f"Pass 2: Analyzing body of function '{func_name}'.")
+                    self.analyze_function_declaration(is_first_pass=False)
+                    print(f"Pass 2: After analyzing '{func_name}' body, index is {self.current_token_index}")
+                    continue
+                # --- End simplified 'fnctn' handling ---
+
+                # Handle 'mn' function analysis trigger
+                elif token_type == 'mn':
+                    print(f"Pass 2: Analyzing 'mn' function.")
+                    self.analyze_main_function() # Analyzes the body
+                    print(f"Pass 2: After analyzing 'mn', index is {self.current_token_index}")
+                    continue
+
+                # Handle global declarations (struct instances, variables, constants)
+                elif token_type == 'dfstrct':
+                    print(f"Pass 2: Analyzing struct instantiation.")
+                    self.analyze_struct_instantiation()
+                    print(f"Pass 2: After dfstrct, index is {self.current_token_index}")
+                    continue
+                elif token_type == 'cnst':
+                    print(f"Pass 2: Analyzing constant declaration.")
+                    self.analyze_constant_declaration()
+                    print(f"Pass 2: After cnst, index is {self.current_token_index}")
+                    continue
+                elif token_type in self.data_types:
+                    print(f"Pass 2: Analyzing variable/array declaration starting with '{token_type}'.")
+                    start_pos = self.current_token_index
+                    # Look ahead logic to differentiate var/array
+                    self.advance() # Past type
+                    next_is_id = self.current_token_index < len(self.token_stream) and self.token_stream[self.current_token_index][0] == 'id'
+                    if not next_is_id: raise SemanticError(f"Expected an identifier after '{token_type}'", line, column)
+                    next_token_after_id = self.peek_next_token()
+                    is_array = next_token_after_id and next_token_after_id[0] == '['
+                    # Reset and analyze
+                    self.current_token_index = start_pos
+                    if is_array: self.analyze_array_declaration()
+                    else: self.analyze_variable_declaration()
+                    print(f"Pass 2: After var/array decl, index is {self.current_token_index}")
+                    continue
+
+                # Handle potential top-level statements
+                elif token_type == 'id':
+                    next_token = self.peek_next_token()
+                    handled = False
+                    if next_token:
+                        if next_token[0] == '.':
+                            print(f"Pass 2: Analyzing top-level struct member access/assignment.")
+                            self.analyze_struct_member_access() # Returns type, ignore here
+                            handled = True
+                        # ... (other id handlers: '(', '[', '=', '++', '--', '+=', etc.) ...
+                        elif next_token[0] == '(':
+                            print(f"Pass 2: Analyzing top-level function call.")
+                            self.analyze_function_call() # Returns type, ignore here
+                            handled = True
+                        elif next_token[0] == '[':
+                            print(f"Pass 2: Analyzing top-level array access/assignment.")
+                            self.analyze_array_access() # Returns type, ignore here
+                            if self.current_token_index < len(self.token_stream) and self.get_current_token()[0] == ';': self.advance()
+                            handled = True
+                        elif next_token[0] == '=':
+                            print(f"Pass 2: Analyzing top-level assignment.")
+                            self.analyze_assignment()
+                            handled = True
+                        elif next_token[0] in ['++', '--']:
+                            print(f"Pass 2: Analyzing top-level increment/decrement.")
+                            self.analyze_increment_operation()
+                            handled = True
+                        elif next_token[0] in ['+=', '-=', '*=', '/=', '%=']:
+                            print(f"Pass 2: Analyzing top-level shortcut assignment.")
+                            self.analyze_assignment() # Handles shortcut ops too
+                            handled = True
+
+                    if handled:
+                         print(f"Pass 2: After top-level ID statement, index is {self.current_token_index}")
+                         continue
+                    else:
+                         print(f"Pass 2: Advancing past unhandled ID '{token_value}'.")
+                         self.advance() # Advance if ID wasn't part of a handled statement
+
+                elif token_type == 'prnt':
+                     print(f"Pass 2: Analyzing top-level print statement.")
+                     self.analyze_print_statement()
+                     print(f"Pass 2: After top-level prnt, index is {self.current_token_index}")
+                     continue
+
+                # If the token wasn't handled by any case above, advance.
+                if self.current_token_index == start_of_loop_index:
+                     print(f"Pass 2: Advancing past unhandled token {token_type} ('{token_value}') to prevent loop.")
+                     self.advance()
+
+            # --- End of Pass 2 ---
+            print("\nFinished full analysis (Pass 2).")
             self.print_symbol_tables()
             return True, errors
+
         except SemanticError as e:
             errors.append(str(e))
+            print("\n--- Symbol Tables after Error ---")
+            self.print_symbol_tables()
+            print("-----------------------------")
             return False, errors
+        except Exception as e:
+             errors.append(f"Unexpected Internal Error during analysis: {e}")
+             print("\n--- Symbol Tables after Internal Error ---")
+             self.print_symbol_tables()
+             print("-----------------------------")
+             import traceback
+             traceback.print_exc()
+             return False, errors
+    
+    # --- Helper: skip_struct_declaration ---
+    def skip_struct_declaration(self):
+        """Advances the token index past a struct definition."""
+        # Assumes current token is 'strct'
+        if self.get_current_token()[0] != 'strct': return # Should not happen
+        self.advance() # Skip 'strct'
+        if self.get_current_token()[0] != 'id': return # Skip name (error if not ID)
+        self.advance()
+        if self.get_current_token()[0] != '{': return # Skip '{' (error if not '{')
+        self.advance()
+        brace_count = 1
+        while brace_count > 0 and self.current_token_index < len(self.token_stream):
+            token_type = self.get_current_token()[0]
+            if token_type == '{':
+                brace_count += 1
+            elif token_type == '}':
+                brace_count -= 1
+            # Advance unconditionally inside the loop
+            if brace_count > 0: # Avoid advancing past the final '}'
+                 self.advance()
+
+        # Now self.current_token_index is at the final '}'
+        if self.get_current_token()[0] == '}':
+            self.advance() # Move past '}'
+        # Skip potential semicolon after '}'
+        if self.current_token_index < len(self.token_stream) and self.get_current_token()[0] == ';':
+            self.advance()
+
+
+    # --- Helper: skip_function_declaration ---
+    def skip_struct_declaration(self):
+        """Advances the token index past a struct definition."""
+        # Assumes current token is 'strct'
+        if self.get_current_token()[0] != 'strct': return # Should not happen
+        self.advance() # Skip 'strct'
+        if self.get_current_token()[0] != 'id': return # Skip name (error if not ID)
+        self.advance()
+        if self.get_current_token()[0] != '{': return # Skip '{' (error if not '{')
+        self.advance()
+        brace_count = 1
+        while brace_count > 0 and self.current_token_index < len(self.token_stream):
+            token_type = self.get_current_token()[0]
+            if token_type == '{':
+                brace_count += 1
+            elif token_type == '}':
+                brace_count -= 1
+            # Advance unconditionally inside the loop
+            if brace_count > 0: # Avoid advancing past the final '}'
+                 self.advance()
+
+        # Now self.current_token_index is at the final '}'
+        if self.current_token_index < len(self.token_stream) and self.get_current_token()[0] == '}':
+            self.advance() # Move past '}'
+        # Skip potential semicolon after '}'
+        if self.current_token_index < len(self.token_stream) and self.get_current_token()[0] == ';':
+            self.advance()
+
+    def is_in_function_body(self):
+        """Check if current position is inside a function body"""
+        # Start from current position and look backward for function keyword
+        pos = self.current_token_index
+        
+        # Go backwards until we find a function start or beginning of file
+        while pos > 0:
+            token_type = self.token_stream[pos][0]
+            
+            # If we find a function, we're inside it
+            if token_type in ['fnctn', 'mn']:
+                # Check if we've passed the opening brace
+                brace_pos = pos
+                while brace_pos < self.current_token_index:
+                    if self.token_stream[brace_pos][0] == '{':
+                        return True
+                    brace_pos += 1
+                return False
+            
+            # If we find the end of a previous function, we're not in a function
+            if token_type == '}':
+                # Check if it's the end of a function
+                # This is simplified and might need refinement
+                return False
+            
+            pos -= 1
+        
+        return False
+
+    def skip_function_declaration(self):
+        """Advances the token index past a 'fnctn' definition (signature and body)."""
+        # Assumes current token is 'fnctn'
+        if self.get_current_token()[0] != 'fnctn': return
+        self.advance() # Skip 'fnctn'
+        # Skip return type/vd
+        if self.get_current_token()[0] in self.data_types or self.get_current_token()[0] == 'vd':
+             self.advance()
+        else: return # Error in syntax
+        # Skip function name
+        if self.get_current_token()[0] == 'id':
+             self.advance()
+        else: return # Error in syntax
+        # Skip parameters (...)
+        if self.get_current_token()[0] != '(': return
+        self.advance() # Skip '('
+        paren_count = 1
+        while paren_count > 0 and self.current_token_index < len(self.token_stream):
+            token_type = self.get_current_token()[0]
+            if token_type == '(': paren_count += 1
+            elif token_type == ')': paren_count -= 1
+            if paren_count > 0: self.advance()
+        if self.current_token_index < len(self.token_stream) and self.get_current_token()[0] == ')':
+             self.advance() # Move past ')'
+        else: return # Error in syntax
+
+        # Skip body {...}
+        if self.current_token_index >= len(self.token_stream) or self.get_current_token()[0] != '{': return
+        self.advance() # Skip '{'
+        brace_count = 1
+        while brace_count > 0 and self.current_token_index < len(self.token_stream):
+            token_type = self.get_current_token()[0]
+            if token_type == '{': brace_count += 1
+            elif token_type == '}': brace_count -= 1
+            if brace_count > 0: self.advance()
+        if self.current_token_index < len(self.token_stream) and self.get_current_token()[0] == '}':
+             self.advance() # Move past '}'
         
     def analyze_constant_declaration(self):
         """Analyze a constant declaration"""
@@ -4278,3 +4586,11 @@ class SemanticAnalyzer:
         if self.current_token_index < len(self.token_stream):
             return self.token_stream[self.current_token_index]
         return None, None, None, None
+    
+    def debug_print_scope_hierarchy(self, scope=None, indent=0):
+        if scope is None:
+            scope = self.current_scope
+        print(" " * indent + f"Scope: {scope.scope_name}")
+        print(" " * indent + "Symbols: " + ", ".join(scope.symbols.keys()))
+        if scope.parent:
+            self.debug_print_scope_hierarchy(scope.parent, indent + 2)

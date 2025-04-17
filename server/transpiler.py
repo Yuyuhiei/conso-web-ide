@@ -589,7 +589,7 @@ class ConsoTranspilerTokenBased:
         # Handle empty print
         if self._peek() == ')':
             self._consume(')'); self._consume(';')
-            return 'printf(""); fflush(stdout);'  # Empty print - no newline
+            return 'printf(""); fflush(stdout);'
         
         # Process arguments
         while not (self._peek() == ')' and paren_level == 0):
@@ -633,7 +633,7 @@ class ConsoTranspilerTokenBased:
                 elif arg_type == 'blnlit': 
                     fmt = "%d"  # Boolean as int
                 elif arg_type == 'id':
-                    # Use a simpler approach for variables
+                    # Variables
                     if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
                         symbol_entry = self.symbol_table.lookup(arg_val)
                         if symbol_entry:
@@ -645,95 +645,93 @@ class ConsoTranspilerTokenBased:
                             elif var_type == 'bln': fmt = "%d"
                             else: fmt = "%d"  # Default
             else:
-                # Check for struct member access pattern (id.id)
+                # Check for struct member access (id.id)
                 has_struct_member = False
-                struct_member_type = None
-                
-                # Look for pattern: identifier followed by dot followed by identifier
                 for i in range(len(arg_tokens) - 2):
-                    tok1_type, tok1_val = self._get_token_info(arg_tokens[i])[:2]
-                    tok2_type, tok2_val = self._get_token_info(arg_tokens[i+1])[:2]
-                    tok3_type, tok3_val = self._get_token_info(arg_tokens[i+2])[:2]
+                    tok_type1 = self._get_token_info(arg_tokens[i])[0]
+                    tok_type2 = self._get_token_info(arg_tokens[i+1])[0]
+                    tok_type3 = self._get_token_info(arg_tokens[i+2])[0]
                     
-                    if tok1_type == 'id' and tok2_type == '.' and tok3_type == 'id':
+                    if tok_type1 == 'id' and tok_type2 == '.' and tok_type3 == 'id':
                         has_struct_member = True
                         
-                        # Try to find the struct type using symbol table
+                        # Get the struct instance and member names
+                        struct_name = self._get_token_info(arg_tokens[i])[1]
+                        member_name = self._get_token_info(arg_tokens[i+2])[1]
+                        
+                        # Try to get the type from symbol table
                         if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                            # First get the struct instance
-                            struct_instance = self.symbol_table.lookup(tok1_val)
-                            if struct_instance and hasattr(struct_instance, 'data_type'):
-                                # Then find the struct definition
-                                struct_def = self.symbol_table.lookup(struct_instance.data_type)
-                                if struct_def and hasattr(struct_def, 'members'):
-                                    # Look up the specific member
-                                    member = struct_def.members.get(tok3_val)
-                                    if member:
-                                        struct_member_type = member.data_type
+                            struct_symbol = self.symbol_table.lookup(struct_name)
+                            if struct_symbol and hasattr(struct_symbol, 'data_type'):
+                                struct_type = struct_symbol.data_type
+                                struct_def = self.symbol_table.lookup(struct_type)
+                                
+                                if struct_def and hasattr(struct_def, 'members') and member_name in struct_def.members:
+                                    member_type = struct_def.members[member_name].data_type
+                                    
+                                    if member_type == 'strng': fmt = "%s"
+                                    elif member_type == 'dbl': fmt = "%.2f"
+                                    elif member_type == 'chr': fmt = "%c"
+                                    elif member_type == 'nt': fmt = "%d"
+                                    elif member_type == 'bln': fmt = "%d"
+                        
+                        break
                 
-                # Determine format based on what we found
-                if has_struct_member and struct_member_type:
-                    if struct_member_type == 'strng': 
-                        fmt = "%s"
-                    elif struct_member_type == 'dbl': 
+                # Check for function call (id followed by parenthesis)
+                if not has_struct_member:
+                    has_function_call = False
+                    for i in range(len(arg_tokens) - 1):
+                        if self._get_token_info(arg_tokens[i])[0] == 'id' and self._get_token_info(arg_tokens[i+1])[0] == '(':
+                            has_function_call = True
+                            
+                            # Get function name
+                            func_name = self._get_token_info(arg_tokens[i])[1]
+                            
+                            # Try to get return type from symbol table
+                            if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                                func_symbol = self.symbol_table.lookup(func_name)
+                                if func_symbol and hasattr(func_symbol, 'data_type'):
+                                    return_type = func_symbol.data_type
+                                    
+                                    if return_type == 'strng': fmt = "%s"
+                                    elif return_type == 'dbl': fmt = "%.2f"
+                                    elif return_type == 'chr': fmt = "%c"
+                                    elif return_type == 'nt': fmt = "%d"
+                                    elif return_type == 'bln': fmt = "%d"
+                            
+                            break
+                
+                # If not struct member or function call, look for logical operators and comparisons
+                if not has_struct_member and not has_function_call:
+                    if any(self._get_token_info(t)[0] in ['&&', '||'] for t in arg_tokens):
+                        # Logical expressions result in boolean (int)
+                        fmt = "%d"
+                    elif any(self._get_token_info(t)[0] in ['==', '!='] for t in arg_tokens):
+                        # Equality checks result in boolean (int)
+                        fmt = "%d"
+                    elif 'dbl' in [self._get_token_info(t)[0] for t in arg_tokens] or '.' in arg_c_expr:
                         fmt = "%.2f"
-                    elif struct_member_type == 'chr': 
-                        fmt = "%c"
-                    elif struct_member_type == 'nt': 
-                        fmt = "%d"
-                    elif struct_member_type == 'bln': 
-                        fmt = "%d"
-                    
-                # If not struct member or couldn't determine type, check for other patterns
-                else:
-                    has_string = False
-                    has_double = False
-                    has_char = False
-                    has_comparison = False
-                    
-                    for token in arg_tokens:
-                        tok_type, tok_val = self._get_token_info(token)[:2]
-                        
-                        # Check token types
-                        if tok_type == 'strnglit' or tok_type == 'id' and tok_val == 'strng':
-                            has_string = True
-                        elif tok_type == 'dbllit' or tok_type == 'NEGDOUBLELIT':
-                            has_double = True
-                        elif tok_type == 'chrlit':
-                            has_char = True
-                        elif tok_type in ['<', '>', '<=', '>=', '==', '!=', '&&', '||']:
-                            has_comparison = True
-                        
-                        # Check symbol table for identifiers
-                        if tok_type == 'id' and self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                            symbol_entry = self.symbol_table.lookup(tok_val)
-                            if symbol_entry:
-                                var_type = getattr(symbol_entry, 'data_type', None)
-                                if var_type == 'strng': has_string = True
-                                elif var_type == 'dbl': has_double = True
-                                elif var_type == 'chr': has_char = True
-                    
-                    # Determine format based on what we found
-                    if has_string:
-                        fmt = "%s"
-                    elif has_char:
-                        fmt = "%c"
-                    elif has_double:
-                        fmt = "%.2f"
-                    elif has_comparison:
-                        fmt = "%d"  # Boolean result
-                    else:
-                        # Default to int for arithmetic and other expressions
-                        fmt = "%d"
             
             # Add format and argument
             format_parts.append(fmt)
             c_args.append(arg_c_expr)
         
-         # Generate printf statement - NO automatic newline
+        # Generate printf statement
         format_str = " ".join(format_parts)
-        
         return f'printf("{format_str}", {", ".join(c_args)}); fflush(stdout);'
+    
+    # Helper method to check if a variable is a string
+    def _is_string_var(self, token):
+        """Check if a token represents a string variable"""
+        token_type, token_value = self._get_token_info(token)[:2]
+        if token_type != 'id':
+            return False
+        
+        if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+            symbol = self.symbol_table.lookup(token_value)
+            return symbol and getattr(symbol, 'data_type', None) == 'strng'
+        
+        return False
 
     def _process_input_from_tokens(self):
         """Process input statement (varname = npt("prompt");) with type-based handling"""
@@ -891,40 +889,111 @@ class ConsoTranspilerTokenBased:
 
     def _tokens_to_c_expression(self, tokens):
         """Converts a list of (type, value) tokens into a C expression string."""
-        # Improved version to handle spacing better
-        c_parts = []; last_token_type = None
-        for tok_type, tok_value in tokens:
-            needs_space = False
-            if c_parts: # Check if not the first token
-                # Conditions for NOT adding a space
-                no_space_before = [')', ']', '.', ';', ',', '++', '--']
-                no_space_after = ['(', '[', '.', '~'] # '~' for negative numbers
-                if last_token_type not in no_space_after and tok_type not in no_space_before:
-                    # Special case: id followed by ( is function call, no space
-                    if not(last_token_type == 'id' and tok_type == '('):
-                         needs_space = True
-
-            if needs_space: c_parts.append(" ")
-
-            # Append C equivalent of token value
-            if tok_type == 'blnlit': c_parts.append(self.bool_mapping.get(tok_value, '0'))
-            elif tok_type == 'strnglit': c_parts.append(f'"{tok_value}"')
-            elif tok_type == 'chrlit': c_parts.append(f"'{tok_value}'")
-            # Map Conso keywords only if they are actual keywords, not just values
-            elif tok_value in self.keyword_mapping: c_parts.append(self.keyword_mapping[tok_value])
-            else: c_parts.append(str(tok_value)) # Default: use value directly
-            last_token_type = tok_type
-
-        expr = "".join(c_parts)
+        # We need a recursive approach to handle complex expressions
+        
+        # Extract potential string comparison subexpressions first
+        def process_subexpression(start, end):
+            """Process a subexpression, handling string comparisons."""
+            # Look for string comparison expressions
+            for i in range(start, end-1):
+                if tokens[i][0] in ['==', '!=']:
+                    # Check if both sides are strings
+                    if i > start and i < end-1:
+                        left_idx = i-1
+                        right_idx = i+1
+                        left_type, left_val = tokens[left_idx]
+                        right_type, right_val = tokens[right_idx]
+                        
+                        # Determine if both operands are strings
+                        left_is_string = left_type == 'strnglit'
+                        right_is_string = right_type == 'strnglit'
+                        
+                        # Check variables in symbol table
+                        if left_type == 'id' and self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                            symbol = self.symbol_table.lookup(left_val)
+                            if symbol and getattr(symbol, 'data_type', None) == 'strng':
+                                left_is_string = True
+                        
+                        if right_type == 'id' and self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                            symbol = self.symbol_table.lookup(right_val)
+                            if symbol and getattr(symbol, 'data_type', None) == 'strng':
+                                right_is_string = True
+                        
+                        # If both are strings, replace with strcmp
+                        if left_is_string and right_is_string:
+                            # Format the operands
+                            left_expr = format_token(left_type, left_val)
+                            right_expr = format_token(right_type, right_val)
+                            
+                            # Create the strcmp expression
+                            op = tokens[i][0]
+                            if op == '==':
+                                return f"(strcmp({left_expr}, {right_expr}) == 0)"
+                            else:  # !=
+                                return f"(strcmp({left_expr}, {right_expr}) != 0)"
+            
+            # If no string comparison, format normally
+            parts = []
+            for i in range(start, end):
+                tok_type, tok_val = tokens[i]
+                
+                # Add spacing between tokens if needed
+                if parts and tok_type not in [')', ']', '.', ';', ',', '++', '--'] and parts[-1][-1] not in ['(', '[', '.']:
+                    if not (parts[-1].endswith('id') and tok_type == '('):  # No space for function calls
+                        parts.append(" ")
+                
+                # Format the token
+                parts.append(format_token(tok_type, tok_val))
+            
+            return "".join(parts)
+        
+        def format_token(tok_type, tok_val):
+            """Format a single token based on its type."""
+            if tok_type == 'blnlit':
+                return self.bool_mapping.get(tok_val, '0')
+            elif tok_type == 'strnglit':
+                return f'"{tok_val}"'
+            elif tok_type == 'chrlit':
+                return f"'{tok_val}'"
+            elif tok_val in self.keyword_mapping:
+                return self.keyword_mapping[tok_val]
+            else:
+                return str(tok_val)
+        
+        # Split the expression into logical segments (&&, ||)
+        segments = []
+        current_start = 0
+        paren_level = 0
+        
+        for i, (tok_type, tok_val) in enumerate(tokens):
+            if tok_type == '(':
+                paren_level += 1
+            elif tok_type == ')':
+                paren_level -= 1
+            
+            # Only split at top-level logical operators
+            if paren_level == 0 and tok_type in ['&&', '||']:
+                # Process the segment before the operator
+                segments.append(process_subexpression(current_start, i))
+                segments.append(tok_type)  # Add the operator
+                current_start = i + 1
+        
+        # Add the final segment
+        if current_start < len(tokens):
+            segments.append(process_subexpression(current_start, len(tokens)))
+        
+        # Join segments
+        result = "".join(segments)
+        
         # Replace boolean literals again as whole words
-        expr = self._replace_bool_literals(expr)
-        # String comparison logic removed - should be handled by parser/semantic analysis
-        return expr
+        result = self._replace_bool_literals(result)
+        return result
 
 
     # --- Helper Methods ---
     def _indent(self, level): return "    " * max(0, level)
-    def _generate_headers(self): return ("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n#include <stddef.h>\n\n")
+    def _generate_headers(self):
+        return ("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n#include <stddef.h>\n\n")
     def _generate_helper_functions(self): return """// Helper function for string input
 char* conso_input(const char* prompt) { printf("%s", prompt); fflush(stdout); char buffer[1024]; char* line = NULL; size_t cl = 0; size_t bl = sizeof(buffer); if (fgets(buffer, bl, stdin) == NULL) { if (feof(stdin)) return NULL; fprintf(stderr, "Input Error\\n"); exit(1); } cl = strlen(buffer); if (cl > 0 && buffer[cl - 1] == '\\n') { buffer[cl - 1] = '\\0'; cl--; } line = malloc(cl + 1); if (line == NULL) { fprintf(stderr, "Malloc Error\\n"); exit(1); } strcpy(line, buffer); return line; }
 // Helper function for string concatenation
@@ -1022,7 +1091,7 @@ if __name__ == "__main__":
         ('end', 'end', 15, 7), (';', ';', 15, 10),
         # ('}', '}', 16, 1) # No closing brace for mn if using end;
     ]
-
+      
 
     print("--- Transpiling User's Conso Code from Tokens ---")
     # Pass None for symbol_table for now
