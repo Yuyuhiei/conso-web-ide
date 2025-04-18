@@ -85,42 +85,27 @@ class ExecutionResult(BaseModel):
 # --- Helper Functions ---
 
 def normalize_code(code: str) -> str:
-    """Normalizes code string for consistent processing."""
-    # (Using the normalization logic from your uploaded server.py)
+    """
+    Normalizes code string for consistent processing, focusing on line endings
+    while preserving blank lines and original structure as much as possible.
+    """
+    # 1. Standardize line endings to \n
     code = code.replace('\r\n', '\n').replace('\r', '\n')
-    code = re.sub(r'mn\s+\(', 'mn(', code)
-    code = re.sub(r'{\s*\n\s+', '{ ', code)
-    code = re.sub(r'\s+\n', '\n', code)
+
+    # 2. Optional: Remove trailing whitespace from each line,
+    #    but keep the line itself, even if it becomes empty.
     lines = code.split('\n')
-    normalized_lines = []
-    for line in lines:
-        left_aligned = line.lstrip()
-        # Collapse multiple spaces/tabs inside the line to a single space
-        collapsed = re.sub(r'[ \t]+', ' ', left_aligned)
-        normalized_lines.append(collapsed)
-    code = '\n'.join(normalized_lines)
+    normalized_lines = [line.rstrip() for line in lines]
 
-    # Optionally, join lines where parentheses are open (for multi-line expressions)
-    # This is a simple heuristic: join lines ending with an open parenthesis or operator
-    joined_lines = []
-    buffer = ''
-    paren_depth = 0
-    for line in normalized_lines: # Use normalized_lines here
-        paren_depth += line.count('(') - line.count(')')
-        if buffer:
-            buffer += ' ' + line
-        else:
-            buffer = line
-        # Only join if the line doesn't end a statement (heuristic: check for ';', '{', '}')
-        # and parentheses are open
-        if paren_depth == 0 or line.rstrip().endswith((';', '{', '}')):
-             joined_lines.append(buffer)
-             buffer = ''
-    if buffer: # Append any remaining buffer content
-        joined_lines.append(buffer)
-    code = '\n'.join(joined_lines)
+    # 3. Rejoin the lines
+    # This preserves blank lines (which become empty strings after rstrip)
+    # and maintains the original line count.
+    normalized_code = '\n'.join(normalized_lines)
 
-    return code
+    # Avoid aggressive joining or stripping of leading whitespace
+    # that could alter line numbers perceived by the lexer.
+
+    return normalized_code
 
 
 def scan_for_npt(tokens: List[Tuple[str, Any, int, int]]) -> List[InputPrompt]:
