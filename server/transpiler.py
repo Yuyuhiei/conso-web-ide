@@ -288,21 +288,62 @@ class ConsoTranspilerTokenBased:
         except: pass # Ignore errors getting line number for error reporting itself
 
         try:
+            # --- Handle struct members first ---
             if is_struct_member:
-                if token_type in self.type_mapping and token_type != 'dfstrct': return self._process_declaration_from_tokens(assign_default=False)
-                else: print(f"Warning: Skipping non-declaration token '{token_type}' inside struct near line {line}"); self._consume(); return ""
+                # Struct members cannot be const and must be standard types
+                if token_type in self.type_mapping and token_type != 'dfstrct':
+                     return self._process_declaration_from_tokens(assign_default=False, is_const=False) # Struct members are never const
+                else:
+                     # Skip unexpected tokens within struct def
+                     print(f"Warning: Skipping non-declaration token '{token_type}' inside struct near line {line}");
+                     self._consume();
+                     return "" # Return empty string, effectively skipping
+
             # --- Processing for global, function, or main scope ---
+
+            # Handle block delimiters first
             if token_type == '{': self._consume(); return "{"
             if token_type == '}': self._consume(); return "}"
-            if token_type in self.type_mapping and token_type != 'dfstrct': return self._process_declaration_from_tokens(assign_default=True)
-            elif token_type == 'dfstrct': return self._process_dfstrct_from_tokens()
+
+            # --- Check for Constant Declaration ---
+            is_const_decl = False
+            if token_type == 'cnst':
+                # Peek ahead to see if a valid type follows 'cnst'
+                next_type_peek = self._peek(1)
+                if next_type_peek in self.type_mapping and next_type_peek != 'dfstrct':
+                    # It's a constant declaration, consume 'cnst'
+                    self._consume('cnst')
+                    is_const_decl = True
+                    token_type = self._peek() # Update token_type to the actual data type (nt, dbl, etc.)
+                else:
+                    # 'cnst' not followed by a valid type - treat as error or unexpected token
+                    # For simplicity, let it fall through to be handled as an 'other' statement or error later
+                    pass # Or raise TranspilerError(f"Expected type after 'cnst', got '{next_type_peek}'", line)
+
+            # --- Check for Regular or Constant Declaration ---
+            # Now token_type is either the original peeked type or the type after 'cnst'
+            if token_type in self.type_mapping and token_type != 'dfstrct':
+                # Pass the is_const flag determined above
+                # Global consts are assigned defaults if not initialized (handled inside)
+                # Local consts require initialization (handled by semantic analysis)
+                return self._process_declaration_from_tokens(assign_default=True, is_const=is_const_decl)
+
+            # --- Check for Struct Instance Declaration ---
+            elif token_type == 'dfstrct':
+                # Struct instances cannot be const with 'cnst' keyword in this design
+                return self._process_dfstrct_from_tokens()
+
             # --- Statements only valid inside functions/main ---
             if is_global:
+                 # If we reach here in global scope with an unhandled token, it's an error
                  print(f"Error: Statement type '{token_type}' not allowed at global scope near line {line}")
+                 # Skip until semicolon to attempt recovery
                  while self._peek() not in [';', None]: self._skip_token()
                  if self._peek() == ';': self._skip_token()
                  return f"// ERROR: Statement type '{token_type}' not allowed at global scope"
+
             # --- Function/Main Scope Statements ---
+            # These should only be processed if not is_global
             if token_type == 'prnt': return self._process_print_from_tokens()
             elif token_type == 'id' and self._peek(1) == '=' and self._peek(2) == 'npt': return self._process_input_from_tokens()
             elif token_type == 'rtrn': return self._process_return_from_tokens()
@@ -317,11 +358,15 @@ class ConsoTranspilerTokenBased:
             elif token_type == 'dflt': return self._process_default_from_tokens()
             elif token_type == 'brk': self._consume('brk'); self._consume(';'); return "break;"
             elif token_type == 'cntn': self._consume('cntn'); self._consume(';'); return "continue;"
-            else: return self._process_other_statement_from_tokens()
+            else:
+                # Handle assignments, function calls, etc.
+                return self._process_other_statement_from_tokens()
+
         except TranspilerError as e:
              print(f"Error processing statement near line {e.line_num if e.line_num else line}: {e.message}")
              self.current_pos = start_pos # Try to reset position
-             while self._peek() not in [';', '}', None]: self._skip_token() # Skip to likely end
+             # Skip until semicolon or brace to attempt recovery
+             while self._peek() not in [';', '}', None]: self._skip_token()
              if self._peek() == ';': self._skip_token()
              return f"// ERROR: {e.message}"
         except Exception as e:
@@ -331,25 +376,28 @@ class ConsoTranspilerTokenBased:
              except: pass
              print(f"Unexpected error processing statement near line {err_line}: {e}")
              # import traceback; traceback.print_exc() # Uncomment for debug
-             # Simple recovery: advance past current token if possible
-             if self.current_pos == start_pos: self._skip_token()
-             # More robust recovery might skip to next semicolon or brace
-             # while self._peek() not in [';', '}', None]: self._skip_token()
-             # if self._peek() == ';': self._skip_token()
+             if self.current_pos == start_pos: self._skip_token() # Advance at least one token
              return f"// UNEXPECTED ERROR processing statement: {e}"
 
 
     # --- Token-Based Specific Statement Processors ---
-    def _process_declaration_from_tokens(self, assign_default=True):
+    def _process_declaration_from_tokens(self, assign_default=True, is_const=False): # Added is_const parameter
         """
-        Processes declaration statement from tokens.
+        Processes declaration statement from tokens. Handles const.
         Handles array initializers. Assigns default values ONLY to non-array variables
         if assign_default is True and no explicit initializer is provided.
-        Arrays are NOT initialized by default.
+        Arrays are NOT initialized by default. Const requires initializer (semantic check).
         """
+        # Consume the actual type token (e.g., nt, dbl) which follows 'cnst' if present
         type_token = self._consume()
         conso_type = type_token[0]
-        c_type = self.type_mapping.get(conso_type, conso_type)
+
+        # Map to base C type
+        base_c_type = self.type_mapping.get(conso_type, conso_type)
+
+        # Prepend "const " if this is a constant declaration
+        c_type = f"const {base_c_type}" if is_const else base_c_type
+
         processed_decls = []
 
         while True: # Loop for comma-separated parts (e.g., nt x, y=1;)
@@ -360,76 +408,60 @@ class ConsoTranspilerTokenBased:
             line_num = self._get_token_info(token_full)[2]
 
             # Parse array dimensions
-            dimensions = [] # Store dimensions for potential later use if needed
+            dimensions = []
             if self._peek() == '[':
                 is_array = True
-                # Process each dimension
                 while self._peek() == '[':
                     self._consume('[')
                     size_tokens = []
                     while self._peek() != ']':
-                        if self._peek() is None:
-                            raise TranspilerError("Unterminated array size", line_num)
-                        # Consume token and store its value
+                        if self._peek() is None: raise TranspilerError("Unterminated array size", line_num)
                         size_tok_type, size_tok_val, _ = self._consume()
-                        # Convert boolean literals if necessary for size expression
-                        if size_tok_type == 'blnlit':
-                             size_tokens.append(self.bool_mapping.get(size_tok_val, '0'))
-                        else:
-                             size_tokens.append(str(size_tok_val)) # Ensure value is string
-
+                        if size_tok_type == 'blnlit': size_tokens.append(self.bool_mapping.get(size_tok_val, '0'))
+                        else: size_tokens.append(str(size_tok_val))
                     self._consume(']')
                     dimension_expr = "".join(size_tokens)
-                    dimensions.append(dimension_expr) # Store the expression/value
+                    dimensions.append(dimension_expr)
                     array_suffix += f"[{dimension_expr}]"
 
-            # Get default value based on type (only used for non-arrays now)
+            # Get default value based on type (only used for non-arrays, non-const without initializer)
             default_val = self.default_values.get(conso_type, "0")
 
             # Handle explicit initializer
             if self._peek() == '=':
                 self._consume('=')
                 initializer_tokens = []
-                brace_level = 0
-                paren_level = 0 # Track parentheses within initializer if needed
-
-                # Collect all tokens belonging to the initializer expression
+                brace_level = 0; paren_level = 0
                 while True:
                     next_token_type = self._peek()
-                    if next_token_type is None:
-                        raise TranspilerError("Unterminated initializer", line_num)
-
-                    # Stop if we hit the end of the declaration part (',' or ';')
-                    # at the top level (outside braces/parentheses)
-                    if (next_token_type == ',' or next_token_type == ';') and brace_level == 0 and paren_level == 0:
-                        break
-
+                    if next_token_type is None: raise TranspilerError("Unterminated initializer", line_num)
+                    if (next_token_type == ',' or next_token_type == ';') and brace_level == 0 and paren_level == 0: break
                     tok_type, tok_val, token_full = self._consume()
-                    initializer_tokens.append((tok_type, tok_val)) # Store as (type, value)
-
-                    # Track nesting level for braces and parentheses
+                    initializer_tokens.append((tok_type, tok_val))
                     if tok_type == '{': brace_level += 1
                     elif tok_type == '}': brace_level -= 1
                     elif tok_type == '(': paren_level += 1
                     elif tok_type == ')': paren_level -= 1
+                    if brace_level < 0 or paren_level < 0: raise TranspilerError("Mismatched braces/parentheses in initializer", line_num)
 
-                    # Basic error check for mismatched braces/parentheses
-                    if brace_level < 0 or paren_level < 0:
-                         raise TranspilerError("Mismatched braces/parentheses in initializer", line_num)
-
-
-                # Convert collected tokens to C expression string
                 init_str = self._tokens_to_c_expression(initializer_tokens)
+                # Use the potentially 'const' modified c_type here
                 c_decl_part = f"{c_type} {var_name}{array_suffix} = {init_str}"
 
             else:
                 # No explicit initializer provided
-                if is_array:
-                    # *** MODIFIED PART ***
-                    # Arrays are NOT initialized by default. Just declare them.
+                # Semantic analysis should ensure 'const' variables ARE initialized.
+                # If we reach here for a const variable, it's technically an error,
+                # but we proceed assuming semantics handled it. We just won't assign default.
+                if is_const:
+                     # Const variables must be initialized. If no '=' found, generate declaration without value.
+                     # Rely on C compiler to catch the missing initializer error.
+                     c_decl_part = f"{c_type} {var_name}{array_suffix}"
+                elif is_array:
+                    # Regular arrays are NOT initialized by default.
                     c_decl_part = f"{c_type} {var_name}{array_suffix}"
                 else:
-                    # Regular (non-array) variable without initializer
+                    # Regular (non-array, non-const) variable without initializer
                     if assign_default:
                         # Assign default value ONLY if assign_default is True
                         c_decl_part = f"{c_type} {var_name} = {default_val}"
@@ -442,19 +474,19 @@ class ConsoTranspilerTokenBased:
             # Check for end of declaration list (semicolon) or next declaration (comma)
             if self._peek() == ';':
                 self._consume(';')
-                break # End of the declaration statement
+                break
             elif self._peek() == ',':
                 self._consume(',')
                 # Continue loop for the next variable in the list
             else:
-                # If neither ';' nor ',' follows, it might be an error or just the end
-                # of the input in some contexts. We break assuming the statement ends.
-                # A more robust parser might raise an error here if ';' is strictly required.
-                # print(f"Warning: Missing ; or , after declaration part near line {line_num}?")
-                break # Assume end of statement if unexpected token
+                # Assume end of statement if unexpected token
+                break
 
-        # Join all parts of the declaration (if multiple variables were declared)
-        # and add the final semicolon.
+        # Join declarations if multiple were on one line (e.g., cnst nt x=1, y=2;)
+        # Need careful joining if they were split by C compiler needs (like separate statements)
+        # For now, join with "; " which might require C compiler fixups if types differ, but okay for same type.
+        # A better approach might return a list of declarations.
+        # Let's assume declarations on one line are typically the same base type.
         return "; ".join(processed_decls) + ";"
     
     def _count_array_elements(self, initializer_tokens):
