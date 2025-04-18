@@ -25,14 +25,26 @@ class TranspilerError(Exception):
 
 # --- Transpiler Class ---
 class ConsoTranspilerTokenBased:
-    def __init__(self, token_list, symbol_table=None):
-        self.tokens = token_list # Assumes NO EOF token is present in this list
+    # --- MODIFIED __init__ ---
+    # Add user_inputs to __init__
+    def __init__(self, token_list, symbol_table=None, user_inputs=None): # Added user_inputs
+        """
+        Initializes the transpiler.
+
+        Args:
+            token_list: List of tokens from the lexer (EOF token should be removed).
+            symbol_table: The symbol table (or relevant scope) for type lookups.
+            user_inputs: A dictionary mapping variable names to user-provided input strings.
+        """
+        self.tokens = token_list
         self.symbol_table = symbol_table
+        # Store user inputs, defaulting to an empty dict if None
+        self.user_inputs = user_inputs if user_inputs is not None else {}
         self.current_pos = 0
         self.output_parts = []
         self.current_indent_level = 0
 
-        # Mappings
+        # Mappings (Keep existing mappings)
         self.type_mapping = {
             "nt": "int", "dbl": "double", "strng": "char*",
             "bln": "int", "chr": "char", "vd": "void",
@@ -44,13 +56,12 @@ class ConsoTranspilerTokenBased:
             "dflt": "default", "brk": "break", "cntn": "continue"
         }
         self.bool_mapping = {"tr": "1", "fls": "0"}
-        # --- UPDATED Default values ---
         self.default_values = {
             "nt": "0",
             "dbl": "0.00",
-            "strng": "NULL", # Changed from "\"\"" to NULL
+            "strng": "NULL",
             "bln": "0",
-            "chr": "'\\0'" # Changed from "'/'" to the null terminator character
+            "chr": "'\\0'"
         }
 
     # --- Token Helpers ---
@@ -775,74 +786,147 @@ class ConsoTranspilerTokenBased:
         return False
 
     def _process_input_from_tokens(self):
-        """Process input statement (varname = npt("prompt");) with type-based handling"""
-        # Get the variable name being assigned
-        _, var_name, _ = self._consume('id')
-        self._consume('=')
-        self._consume('npt')
-        self._consume('(')
-        
-        # Get the prompt string if present
-        prompt = ""
-        if self._peek() == 'strnglit':
-            prompt = self._consume('strnglit')[1]
-        
-        self._consume(')')
-        self._consume(';')
-        
-        # Determine variable type using symbol table
-        var_type = 'strng'  # Default to string if type can't be determined
-        array_size = 100    # Default size for string buffers
-        is_array = False
-        
-        if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-            symbol = self.symbol_table.lookup(var_name)
-            if symbol:
-                var_type = getattr(symbol, 'data_type', 'strng')
-                is_array = getattr(symbol, 'is_array', False)
-                # If it's an array, try to get the size
-                if is_array and hasattr(symbol, 'array_sizes') and symbol.array_sizes:
-                    if isinstance(symbol.array_sizes[0], int):
-                        array_size = symbol.array_sizes[0]
-        
-        # Generate appropriate input code based on type
-        c_code = []
-        
-        # Always print the prompt
-        if prompt:
-            c_code.append(f'printf("{prompt}");')
-        
-        # Generate type-specific input code
-        if var_type == 'nt':
-            # Integer input
-            c_code.append(f'scanf("%d", &{var_name});')
-            c_code.append('getchar(); // Consume newline')
-        elif var_type == 'dbl':
-            # Double input
-            c_code.append(f'scanf("%lf", &{var_name});')
-            c_code.append('getchar(); // Consume newline')
-        elif var_type == 'chr':
-            # Character input
-            c_code.append(f'{var_name} = getchar();')
-            c_code.append('getchar(); // Consume newline if present')
-        elif var_type == 'bln':
-            # Boolean input - read as int
-            c_code.append(f'{{ int temp; scanf("%d", &temp); {var_name} = temp != 0; }}')
-            c_code.append('getchar(); // Consume newline')
-        else:
-            # String input (default)
-            if is_array:
-                # For array variables, use fgets directly
-                c_code.append(f'fgets({var_name}, sizeof({var_name}), stdin);')
-                # Remove trailing newline if present
-                c_code.append(f'{{ char *p = strchr({var_name}, \'\\n\'); if(p) *p = 0; }}')
+        """
+        Processes an input statement (var = npt("prompt");) by generating
+        a C assignment using pre-collected user input.
+        Relies on self.user_inputs dictionary and self.symbol_table.
+        """
+        start_pos = self.current_pos
+        line_num = '?'
+        var_name = '<unknown>' # Initialize var_name for error reporting
+
+        try:
+            # Consume 'id', '=', 'npt', '('
+            _, var_name, token_full = self._consume('id')
+            line_num = self._get_token_info(token_full)[2]
+            self._consume('=')
+            self._consume('npt')
+            self._consume('(')
+
+            # Consume the prompt string literal if present, but we don't use it here
+            # The prompt was already extracted in the pre-scan phase in server.py
+            if self._peek() == 'strnglit':
+                self._consume('strnglit')
+
+            # Consume ')' and ';'
+            self._consume(')')
+            self._consume(';')
+
+            # --- Get the pre-collected input value ---
+            if var_name not in self.user_inputs:
+                # This case should ideally be prevented by the pre-scan logic
+                # ensuring all required inputs are collected.
+                raise TranspilerError(f"Missing input value for variable '{var_name}' during transpilation", line_num)
+
+            # Get the raw input string provided by the user
+            input_value_str = self.user_inputs[var_name]
+
+            # --- Determine variable type from symbol table ---
+            var_type = None
+            is_array = False # Check if it's an array type if needed
+            if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                # Assuming 'lookup' searches the current scope appropriately.
+                # You might need to pass the specific function scope's symbol table
+                # to the transpiler or ensure lookup handles scopes correctly.
+                symbol = self.symbol_table.lookup(var_name)
+                if symbol:
+                    var_type = getattr(symbol, 'data_type', None)
+                    is_array = getattr(symbol, 'is_array', False)
+                else:
+                     # It's possible the variable is declared globally, try looking up there if applicable
+                     # This depends heavily on your symbol table structure.
+                     # For simplicity, we raise an error if not found in the provided table.
+                     raise TranspilerError(f"Variable '{var_name}' not found in symbol table for input", line_num)
             else:
-                # For regular char* variables, allocate buffer, read, and assign
-                c_code.append(f'{{ char buffer[{array_size}]; fgets(buffer, {array_size}, stdin);')
-                c_code.append('char *p = strchr(buffer, \'\\n\'); if(p) *p = 0;')
-                c_code.append(f'{var_name} = strdup(buffer); }}')
-        
-        return ' '.join(c_code)
+                 # This should not happen if semantic analysis passed, but check anyway.
+                 raise TranspilerError("Symbol table not available for input processing", line_num)
+
+            if var_type is None:
+                 # Symbol found, but no type information? Semantic analysis should catch this.
+                 raise TranspilerError(f"Could not determine type for variable '{var_name}' during input processing", line_num)
+
+            # --- Format the input string into a C literal based on type ---
+            c_literal = ""
+            try:
+                if var_type == 'nt':
+                    # Convert to int, then back to string for C code
+                    c_literal = str(int(input_value_str))
+                elif var_type == 'dbl':
+                     # Convert to float, format, then back to string
+                     # Use a standard float representation, C compiler handles precision.
+                     c_literal = str(float(input_value_str))
+                elif var_type == 'chr':
+                    # Take the first character, escape special chars if needed
+                    if len(input_value_str) >= 1:
+                        char_val = input_value_str[0]
+                        # Basic escaping for single quote, double quote, and backslash
+                        if char_val == "'": char_val = "\\'"
+                        elif char_val == '"': char_val = '\\"' # Escape double quotes too
+                        elif char_val == "\\": char_val = "\\\\"
+                        # Add more escapes if needed (e.g., \n, \t) - though unlikely from simple input
+                        c_literal = f"'{char_val}'"
+                    else:
+                        c_literal = "'\\0'" # Default to null char if input is empty
+                elif var_type == 'bln':
+                    # Map common truthy/falsy strings to 1/0
+                    lowered_input = input_value_str.lower().strip()
+                    if lowered_input in ['true', 'tr', '1', 'yes', 'y']:
+                        c_literal = "1"
+                    else:
+                        c_literal = "0" # Default to false for unrecognized input
+                elif var_type == 'strng':
+                    # Escape double quotes and backslashes within the string for C literal
+                    escaped_str = input_value_str.replace('\\', '\\\\').replace('"', '\\"')
+                    # Assigning a string literal to char* is generally okay in C for initialization
+                    # or if the pointer points to read-only memory. If the C code intends
+                    # to modify the string later, this approach might need refinement
+                    # (e.g., allocating memory and using strcpy in C).
+                    # Based on your initial C code using `strdup`, assuming `char*` is used.
+                    c_literal = f'"{escaped_str}"'
+                else:
+                    # Handle other types or raise error if a variable of an unsupported type
+                    # is somehow used with npt (semantic analysis should prevent this).
+                    raise TranspilerError(f"Unsupported type '{var_type}' for 'npt' assignment", line_num)
+
+            except ValueError:
+                 # Handle cases where the input string cannot be converted to the target type
+                 # (e.g., user enters "abc" for an 'nt')
+                 raise TranspilerError(f"Invalid input format for variable '{var_name}' (expected {var_type}, got '{input_value_str}')", line_num)
+
+
+            # --- Generate the C assignment statement ---
+            # Check if the variable is an array. Direct assignment might not be appropriate for arrays.
+            # This example assumes non-array assignment based on your initial code.
+            # Handling array input would require more complex logic (e.g., transpiling to strcpy or loops).
+            if is_array:
+                 # For now, raise an error if trying to assign input directly to an array base name
+                 # A future enhancement could potentially use strcpy if var_type is 'strng' and it's a char array.
+                 raise TranspilerError(f"Direct input assignment to array '{var_name}' using 'npt' is not supported in this version.", line_num)
+
+            # Return the C assignment statement
+            return f"{var_name} = {c_literal};"
+
+        except TranspilerError as e:
+            # Re-raise or handle specific transpiler errors
+            print(f"Error processing input statement for '{var_name}' near line {e.line_num if e.line_num else line_num}: {e.message}")
+            # Attempt to recover by skipping to the next statement delimiter
+            self.current_pos = start_pos # Reset position
+            while self._peek() not in [';', '}', '{', None]: # Skip until potential statement end/start
+                self._skip_token()
+            if self._peek() == ';':
+                self._skip_token() # Consume the semicolon
+            # Return an error comment in the generated code
+            return f"// TRANSPILER ERROR (Input): {e.message}"
+        except Exception as e:
+             # Catch unexpected errors during input processing
+             err_line = line_num # Use line_num obtained earlier
+             print(f"Unexpected error processing input for '{var_name}' near line {err_line}: {e}")
+             import traceback
+             traceback.print_exc() # Print stack trace for debugging
+             # Attempt recovery
+             if self.current_pos == start_pos: self._skip_token() # Ensure progress
+             # Return an error comment
+             return f"// UNEXPECTED TRANSPILER ERROR (Input): {e}"
 
     def _process_return_from_tokens(self):
         self._consume('rtrn')
@@ -1232,25 +1316,41 @@ def transpile(conso_code):
     print("Warning: Calling string-based transpile. Token-based is preferred.")
     return "// String-based transpile function needs lexer/parser integration."
 
-def transpile_from_tokens(token_list, symbol_table=None):
+def transpile_from_tokens(token_list, symbol_table=None, user_inputs=None): # Added user_inputs
     """
-    Transpiles Conso code from a token list using the token-based transpiler.
+    Transpiles Conso code from a token list using the token-based transpiler,
+    injecting provided user inputs for 'npt' statements.
+
+    Args:
+        token_list: List of tokens (type, value, line, col). EOF should be excluded.
+        symbol_table: The symbol table (e.g., global scope or relevant function scope).
+        user_inputs: Dictionary mapping variable names to user-provided input strings.
+
+    Returns:
+        The generated C code as a string, or an error comment string.
     """
     # Remove EOF token before passing to transpiler if present
+    # Ensure token_list is not empty before checking the last element
     if token_list:
          last_token = token_list[-1]
-         token_type, _, _ = ConsoTranspilerTokenBased(token_list)._get_token_info(last_token) # Use helper to get type
+         # Use a temporary instance just to access the helper method safely
+         temp_transpiler = ConsoTranspilerTokenBased([])
+         token_type, _, _ = temp_transpiler._get_token_info(last_token)
          if token_type == 'EOF':
               print("Info: Removing EOF token before transpilation.")
               token_list = token_list[:-1]
 
-    transpiler = ConsoTranspilerTokenBased(token_list, symbol_table)
+    # Pass user_inputs to the constructor
+    transpiler = ConsoTranspilerTokenBased(token_list, symbol_table, user_inputs)
     try:
+        # Perform the transpilation
         return transpiler.transpile()
     except TranspilerError as e:
+        # Handle known transpilation errors
         print(f"Transpilation Error: {e}", file=sys.stderr)
         return f"// TRANSPILER ERROR: {e}"
     except Exception as e:
+        # Handle unexpected errors during transpilation
         print(f"Unexpected Transpiler Error: {type(e).__name__}: {e}", file=sys.stderr)
         import traceback
         print(traceback.format_exc(), file=sys.stderr) # Print full traceback

@@ -1,0 +1,141 @@
+/* src/components/InputModal.css */
+
+/* Overlay covers the entire screen */
+.input-modal-overlay {
+    position: fixed; /* Stay in place even when scrolling */
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.6); /* Semi-transparent black background */
+    display: flex; /* Use flexbox for centering */
+    justify-content: center; /* Center horizontally */
+    align-items: center; /* Center vertically */
+    z-index: 1000; /* Ensure modal is on top */
+    backdrop-filter: blur(3px); /* Optional: blur background */
+  }
+  
+  /* Modal content container */
+  .input-modal-content {
+    background-color: #2d2d2d; /* Dark background for the modal */
+    color: #d4d4d4; /* Light text color */
+    padding: 25px 30px;
+    border-radius: 8px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.4);
+    width: 90%; /* Responsive width */
+    max-width: 500px; /* Maximum width */
+    border: 1px solid #444;
+    animation: fadeIn 0.3s ease-out; /* Simple fade-in animation */
+  }
+  
+  /* Animation keyframes */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  
+  /* Modal title */
+  .input-modal-content h2 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #649ad1; /* Accent color for title */
+    font-size: 1.4em;
+    border-bottom: 1px solid #444;
+    padding-bottom: 10px;
+  }
+  
+  /* Explanatory paragraph */
+  .input-modal-content p {
+    margin-bottom: 20px;
+    font-size: 0.95em;
+    line-height: 1.5;
+  }
+  
+  /* Styling for each input group (label + input) */
+  .input-group {
+    margin-bottom: 18px;
+  }
+  
+  /* Label styling */
+  .input-group label {
+    display: block; /* Make label take full width */
+    margin-bottom: 8px;
+    font-weight: bold;
+    font-size: 0.9em;
+    color: #ccc; /* Slightly lighter label color */
+  }
+  
+  /* Code tag styling within labels */
+  .input-group label code {
+    background-color: #3a3a3a;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 0.95em;
+    color: #b3d1ef;
+  }
+  
+  /* Input field styling */
+  .input-group input[type="text"] {
+    width: 100%; /* Full width */
+    padding: 10px 12px;
+    border: 1px solid #555; /* Darker border */
+    border-radius: 4px;
+    background-color: #1e1e1e; /* Match editor background */
+    color: #d4d4d4; /* Light text color */
+    font-size: 1em;
+    box-sizing: border-box; /* Include padding and border in width */
+    transition: border-color 0.2s ease;
+  }
+  
+  /* Input field focus state */
+  .input-group input[type="text"]:focus {
+    outline: none; /* Remove default outline */
+    border-color: #649ad1; /* Highlight border on focus */
+    box-shadow: 0 0 0 2px rgba(100, 154, 209, 0.3); /* Subtle glow effect */
+  }
+  
+  /* Container for modal action buttons */
+  .modal-actions {
+    margin-top: 25px;
+    display: flex;
+    justify-content: flex-end; /* Align buttons to the right */
+    gap: 10px; /* Space between buttons */
+  }
+  
+  /* General button styling */
+  .modal-actions button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    font-size: 0.95em;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+  }
+  
+  /* Submit button styling */
+  .modal-actions .submit-button {
+    background-color: #4CAF50; /* Green */
+    color: white;
+  }
+  
+  .modal-actions .submit-button:hover {
+    background-color: #45a049;
+  }
+  
+  /* Close/Cancel button styling */
+  .modal-actions .close-button {
+    background-color: #555; /* Grey */
+    color: #eee;
+  }
+  
+  .modal-actions .close-button:hover {
+    background-color: #666;
+  }
+  
+  /* Button active state */
+  .modal-actions button:active {
+      transform: scale(0.98); /* Slight shrink effect */
+  }
+  

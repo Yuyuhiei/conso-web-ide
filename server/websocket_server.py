@@ -34,23 +34,26 @@ manager = ConnectionManager()
 
 def normalize_code(code: str) -> str:
     """
-    Normalize code to handle newlines and indentation in a way that
-    satisfies the lexer's delimiter requirements
+    Normalizes code string for consistent processing, focusing on line endings
+    while preserving blank lines and original structure as much as possible.
     """
-    # Handle specific case where opening brace is followed by newline and indentation
-    # Replace "{\n    " with "{ "
-    code = re.sub(r'{\s*\n\s+', '{ ', code)
-    
-    # Remove spaces between mn and (
-    code = re.sub(r'mn\s+\(', 'mn(', code)
-    
-    # Remove extra whitespace at end of lines
-    code = re.sub(r'\s+\n', '\n', code)
-    
-    # Ensure consistent line endings
-    code = code.replace('\r\n', '\n')
-    
-    return code
+    # 1. Standardize line endings to \n
+    code = code.replace('\r\n', '\n').replace('\r', '\n')
+
+    # 2. Optional: Remove trailing whitespace from each line,
+    #    but keep the line itself, even if it becomes empty.
+    lines = code.split('\n')
+    normalized_lines = [line.rstrip() for line in lines]
+
+    # 3. Rejoin the lines
+    # This preserves blank lines (which become empty strings after rstrip)
+    # and maintains the original line count.
+    normalized_code = '\n'.join(normalized_lines)
+
+    # Avoid aggressive joining or stripping of leading whitespace
+    # that could alter line numbers perceived by the lexer.
+
+    return normalized_code
 
 # WebSocket connection handler
 @app.websocket("/ws")

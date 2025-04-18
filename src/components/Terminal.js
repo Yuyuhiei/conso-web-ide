@@ -1,475 +1,200 @@
-import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
-import { analyzeSemantics, runConsoCode } from '../services/api';
+// src/components/Terminal.js
+import React, { useRef, useEffect, useState, forwardRef } from 'react';
 
-const Terminal = forwardRef(({ output, codeChanged, transpiledCode, programOutput, code, onRunComplete }, ref) => {
-  const terminalRef = useRef(null);
+// Define status types locally for styling keys
+const STATUS_TYPE = {
+  INFO: 'info',
+  SUCCESS: 'success',
+  ERROR: 'error',
+  RUNNING: 'running',
+  PENDING: 'pending'
+};
+
+// Helper to get style based on status type
+const getStatusStyle = (type) => {
+  switch (type) {
+    case STATUS_TYPE.SUCCESS:
+      return { color: '#89d185' }; // Green
+    case STATUS_TYPE.ERROR:
+      return { color: '#f48771' }; // Red/Orange
+    case STATUS_TYPE.RUNNING:
+      return { color: '#649ad1', fontStyle: 'italic' }; // Blue Italic
+    case STATUS_TYPE.INFO:
+      return { color: '#cca700' }; // Yellow/Gold
+    case STATUS_TYPE.PENDING:
+    default:
+      return { color: '#888', fontStyle: 'italic' }; // Grey Italic
+  }
+};
+
+// Terminal component displays status lines passed via props
+const Terminal = forwardRef(({
+  lexicalStatus,
+  syntaxStatus,
+  semanticStatus,
+  executionStatus,
+  programOutput, // Still needed
+  transpiledCode // Still needed
+}, ref) => {
+  const terminalContentRef = useRef(null);
   const resizeHandleRef = useRef(null);
-  const [height, setHeight] = useState(200); // Default height
+  const containerRef = useRef(null);
+
+  const [height, setHeight] = useState(() => {
+      const savedHeight = localStorage.getItem('conso-terminal-height');
+      return savedHeight ? Math.max(100, parseInt(savedHeight, 10)) : 200;
+  });
   const [isDragging, setIsDragging] = useState(false);
   const [startY, setStartY] = useState(0);
   const [startHeight, setStartHeight] = useState(0);
   const [showTranspiledInTerminal, setShowTranspiledInTerminal] = useState(false);
 
-  const [categoryMessages, setCategoryMessages] = useState({
-    lexical: null,
-    syntax: null,
-    semantic: null,
-    execution: null // For program execution results
-  });
-
-  // New state for run logic
-  const [isRunning, setIsRunning] = useState(false);
-  const [runOutput, setRunOutput] = useState('');
-  const [runError, setRunError] = useState('');
-  const [runTranspiledCode, setRunTranspiledCode] = useState('');
-
-  // In the Terminal.js component, add debugging
+  // Auto scroll to bottom when content changes
   useEffect(() => {
-    console.log("Terminal received programOutput:", programOutput);
-  }, [programOutput]);
-
-  // Auto scroll to bottom when new output is added
-  useEffect(() => {
-    if (terminalRef.current) {
-      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    if (terminalContentRef.current) {
+      terminalContentRef.current.scrollTop = terminalContentRef.current.scrollHeight;
     }
-  }, [categoryMessages, showTranspiledInTerminal, programOutput, runOutput, runError]);
+    // Update scroll on any status change or output change
+  }, [lexicalStatus, syntaxStatus, semanticStatus, executionStatus, programOutput, showTranspiledInTerminal, transpiledCode]);
 
-  // Clear semantic analysis message when code changes
-  useEffect(() => {
-    if (codeChanged) {
-      setCategoryMessages(prev => ({
-        ...prev,
-        semantic: null,
-        execution: null // Also clear execution results
-      }));
-      setRunOutput('');
-      setRunError('');
-      setRunTranspiledCode('');
-    }
-  }, [codeChanged]);
-
-  // Update execution results when program output changes
-  useEffect(() => {
-    if (programOutput) {
-      setCategoryMessages(prev => ({
-        ...prev,
-        execution: "Program executed successfully"
-      }));
-    }
-  }, [programOutput]);
-
-  // Setup resize handlers
+  // Resize handlers (Keep as is)
   useEffect(() => {
     const handleMouseDown = (e) => {
-      setIsDragging(true);
-      setStartY(e.clientY);
-      setStartHeight(height);
+      e.preventDefault(); setIsDragging(true); setStartY(e.clientY); setStartHeight(height);
+      document.body.style.userSelect = 'none';
     };
-
     const handleMouseMove = (e) => {
       if (!isDragging) return;
-
-      // Calculate new height (negative value because we're dragging upward to increase height)
       const newHeight = Math.max(100, startHeight - (e.clientY - startY));
       setHeight(newHeight);
     };
-
     const handleMouseUp = () => {
-      setIsDragging(false);
-    };
-
-    const resizeHandle = resizeHandleRef.current;
-    if (resizeHandle) {
-      resizeHandle.addEventListener('mousedown', handleMouseDown);
-    }
-
-    if (isDragging) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-    }
-
-    return () => {
-      if (resizeHandle) {
-        resizeHandle.removeEventListener('mousedown', handleMouseDown);
+      if (isDragging) {
+          setIsDragging(false); document.body.style.userSelect = '';
+          localStorage.setItem('conso-terminal-height', height.toString());
       }
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    const resizeHandle = resizeHandleRef.current;
+    if (resizeHandle) { resizeHandle.addEventListener('mousedown', handleMouseDown); }
+    if (isDragging) { document.addEventListener('mousemove', handleMouseMove); document.addEventListener('mouseup', handleMouseUp); }
+    return () => {
+      if (resizeHandle) { resizeHandle.removeEventListener('mousedown', handleMouseDown); }
+      document.removeEventListener('mousemove', handleMouseMove); document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.userSelect = '';
     };
   }, [isDragging, startY, startHeight, height]);
 
-  // Process output to extract the latest message for each category
-  useEffect(() => {
-    if (!output) {
-      setCategoryMessages({
-        lexical: null,
-        syntax: null,
-        semantic: null,
-        execution: null
-      });
-      return;
-    }
-
-    // Split output into lines
-    const lines = output.split('\n').filter(line => line.trim() !== '');
-
-    // Extract the latest message for each category
-    const newCategoryMessages = {
-      lexical: null,
-      syntax: null,
-      semantic: codeChanged ? null : categoryMessages.semantic, // If code has changed, clear semantic message
-      execution: codeChanged ? null : categoryMessages.execution // If code has changed, clear execution results
-    };
-
-    lines.forEach(line => {
-      // Lexical Analysis messages
-      if (line.includes('Lexer') || line.includes('Lexical')) {
-        newCategoryMessages.lexical = line;
-      }
-      // Syntax Analysis messages
-      else if (line.includes('Parser') || line.includes('Syntax') ||
-        line.includes('Input accepted') || line.includes('Input rejected') ||
-        line.includes('Syntactically correct')) {
-        newCategoryMessages.syntax = line;
-      }
-      // Semantic Analysis messages
-      else if (line.includes('Semantic') && !codeChanged) {
-        // Only update semantic message if code hasn't changed
-        newCategoryMessages.semantic = line;
-      }
-      // Execution messages
-      else if ((line.includes('executed') || line.includes('Running')) && !codeChanged) {
-        // Only update execution message if code hasn't changed
-        newCategoryMessages.execution = line;
-      }
-    });
-
-    setCategoryMessages(newCategoryMessages);
-  }, [output, categoryMessages.semantic, categoryMessages.execution, codeChanged]);
-
-  // Get line type based on content to apply appropriate styling
-  const getLineType = (line) => {
-    if (!line) return 'info';
-
-    if (line.includes('Error') || line.includes('❌') || line.includes('rejected') || line.includes('failed')) {
-      return 'error';
-    } else if (line.includes('✅') || line.includes('accepted') ||
-      line.includes('Syntactically correct') || line.includes('successfully')) {
-      return 'success';
-    } else if (line.includes('Warning')) {
-      return 'warning';
-    } else {
-      return 'info';
-    }
-  };
-
-  // Toggle showing transpiled code in terminal
+  // Toggle C code view (Keep as is)
   const toggleTranspiledCode = () => {
     setShowTranspiledInTerminal(!showTranspiledInTerminal);
   };
 
-  // Run button logic
-  const handleRun = async () => {
-    setIsRunning(true);
-    setRunOutput('');
-    setRunError('');
-    setRunTranspiledCode('');
-    try {
-      // 1. Call semantic analyzer
-      const semanticResult = await analyzeSemantics(code);
-      if (!semanticResult.success) {
-        const errorMsg = `Semantic Error: ${semanticResult.errors.join('\n')}`;
-        setRunError(errorMsg);
-        if (onRunComplete) onRunComplete({ output: '', error: errorMsg, transpiledCode: '' });
-        setIsRunning(false);
-        return;
-      }
-      // 2. If semantic passes, call transpiler/run
-      const runResult = await runConsoCode(code);
-      if (!runResult.success) {
-        const errorMsg = (runResult.errors && runResult.errors.length > 0)
-          ? runResult.errors.join('\n')
-          : 'Unknown error during execution';
-        setRunError(errorMsg);
-        setRunTranspiledCode(runResult.transpiledCode || '');
-        if (onRunComplete) onRunComplete({ output: '', error: errorMsg, transpiledCode: runResult.transpiledCode || '' });
-        setIsRunning(false);
-        return;
-      }
-      setRunTranspiledCode(runResult.transpiledCode || '');
-      const outputValue = runResult.output || '(Program executed but produced no output)';
-      setRunOutput(outputValue);
-      if (onRunComplete) onRunComplete({ output: runResult.output, error: '', transpiledCode: runResult.transpiledCode || '' });
-    } catch (err) {
-      setRunError(`Error: ${err.message}`);
-      if (onRunComplete) onRunComplete({ output: '', error: `Error: ${err.message}`, transpiledCode: '' });
-    } finally {
-      setIsRunning(false);
-    }
+  // Helper to render a single status line
+  const renderStatusLine = (label, status) => {
+    const { message, type } = status || { message: null, type: STATUS_TYPE.PENDING };
+    const style = getStatusStyle(type);
+    const displayMessage = message === null ? (type === STATUS_TYPE.PENDING ? 'Pending...' : '...') : message;
+
+    return (
+      <div className={`terminal-line status-${type}`} style={{ display: 'flex', alignItems: 'center', minHeight: '20px', marginBottom: '2px', marginLeft: '15px' }}>
+        <span style={{ fontWeight: 'bold', color: '#aaa', minWidth: '100px', marginRight: '10px' }}>{label}:</span>
+        <span style={style}>{displayMessage}</span>
+      </div>
+    );
   };
 
-  // Expose run method to parent via ref
-  useImperativeHandle(ref, () => ({
-    run: handleRun
-  }));
-
-  // Convert category messages to array for rendering
-  const getDisplayLines = () => {
-    const result = [];
-
-    if (categoryMessages.lexical) {
-      result.push({
-        category: 'Lexical',
-        text: categoryMessages.lexical,
-        type: getLineType(categoryMessages.lexical)
-      });
-    }
-
-    if (categoryMessages.syntax) {
-      result.push({
-        category: 'Syntax',
-        text: categoryMessages.syntax,
-        type: getLineType(categoryMessages.syntax)
-      });
-    }
-
-    if (categoryMessages.semantic) {
-      result.push({
-        category: 'Semantic',
-        text: categoryMessages.semantic,
-        type: getLineType(categoryMessages.semantic)
-      });
-    }
-
-    if (categoryMessages.execution) {
-      result.push({
-        category: 'Execution',
-        text: categoryMessages.execution,
-        type: getLineType(categoryMessages.execution)
-      });
-    }
-
-    return result;
-  };
-
-  const displayLines = getDisplayLines();
-
-  // Determine if Run button should be enabled
-  const canRun =
-    categoryMessages.lexical &&
-    categoryMessages.syntax &&
-    getLineType(categoryMessages.lexical) !== 'error' &&
-    getLineType(categoryMessages.syntax) !== 'error' &&
-    !isRunning &&
-    code && code.trim().length > 0;
 
   return (
     <div
+      ref={containerRef}
       className="terminal-container"
       style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: `${height}px`,
-        position: 'relative',
-        width: '100%',
-        borderTop: '1px solid #333'
+        display: 'flex', flexDirection: 'column', height: `${height}px`,
+        position: 'relative', width: '100%', borderTop: '1px solid #333',
+        backgroundColor: '#1e1e1e', flexShrink: 0
       }}
     >
-      {/* Resize handle */}
-      <div
-        ref={resizeHandleRef}
-        className="resize-handle"
-        style={{
-          position: 'absolute',
-          top: '-5px',
-          left: 0,
-          right: 0,
-          height: '10px',
-          cursor: 'ns-resize',
-          zIndex: 100
-        }}
-      />
+      {/* Resize handle (Keep as is) */}
+      <div ref={resizeHandleRef} className="resize-handle" style={{ position: 'absolute', top: '-5px', left: 0, right: 0, height: '10px', cursor: 'ns-resize', zIndex: 100 }} />
 
-      <div
-        className="terminal-header"
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          padding: '5px 10px',
-          backgroundColor: '#252526',
-          borderBottom: '1px solid #333',
-          userSelect: 'none'
-        }}
-      >
-        <div>Terminal</div>
+      {/* Terminal Header (Keep as is) */}
+      <div className="terminal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 10px', backgroundColor: '#252526', borderBottom: '1px solid #333', userSelect: 'none', color: '#ccc', flexShrink: 0 }}>
+        <span>Terminal</span>
         <div style={{ display: 'flex', gap: '8px' }}>
           {transpiledCode && (
-            <button
-              onClick={toggleTranspiledCode}
-              style={{
-                backgroundColor: 'rgba(255,255,255,0.1)',
-                border: 'none',
-                color: 'white',
-                padding: '2px 8px',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                fontSize: '12px'
-              }}
-            >
-              {showTranspiledInTerminal ? 'Hide C Code' : 'Show C Code'}
+            <button onClick={toggleTranspiledCode} title={showTranspiledInTerminal ? "Hide C code" : "Show C code"} style={{ backgroundColor: 'rgba(255,255,255,0.1)', border: 'none', color: 'white', padding: '2px 8px', borderRadius: '3px', cursor: 'pointer', fontSize: '12px' }}>
+              {showTranspiledInTerminal ? 'Hide C' : 'Show C'}
             </button>
           )}
         </div>
       </div>
 
+      {/* Terminal Content Area */}
       <div
-        ref={terminalRef}
+        ref={terminalContentRef}
         className="terminal-content"
         style={{
-          backgroundColor: '#1e1e1e',
-          color: '#d4d4d4',
-          fontFamily: 'Consolas, monospace',
-          fontSize: '14px',
-          padding: '10px',
-          flexGrow: 1,
-          overflowY: 'auto',
-          whiteSpace: 'pre-wrap',
-          position: 'relative'
+          color: '#d4d4d4', fontFamily: 'Consolas, "Courier New", monospace', fontSize: '14px',
+          padding: '10px', flexGrow: 1, overflowY: 'auto', whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word', // Changed from break-all for better readability
+          position: 'relative', scrollbarWidth: 'thin', scrollbarColor: '#649ad1 #1e1e1e',
         }}
       >
-        <div
-          className="terminal-cursor"
-          style={{
-            position: 'absolute',
-            left: '10px',
-            top: '10px',
-            width: '8px',
-            height: '16px',
-            backgroundColor: '#d4d4d4',
-            opacity: 0.7,
-            animation: 'blink 1s step-end infinite'
-          }}
-        />
-        <style>
+         {/* Render Fixed Status Lines */}
+         {renderStatusLine("Lexical", lexicalStatus)}
+         {renderStatusLine("Syntax", syntaxStatus)}
+         {renderStatusLine("Semantic", semanticStatus)}
+         {renderStatusLine("Execution", executionStatus)}
+
+         {/* Display Program Output (if any) */}
+         {programOutput && (
+            <div className="program-output" style={{ marginTop: '10px', borderTop: '1px dashed #89d185', paddingTop: '10px' }}>
+                <div style={{ fontWeight: 'bold', color: '#89d185', marginBottom: '5px', marginLeft: '15px' }}>Program Output:</div>
+                <pre
+                  style={{
+                    backgroundColor: '#2d2d2d', padding: '10px', borderRadius: '4px',
+                    overflowX: 'auto', color: '#ffffff', fontSize: '14px',
+                    fontFamily: 'Consolas, "Courier New", monospace', lineHeight: '1.4',
+                    marginTop: '5px', marginLeft: '15px', marginRight: '10px'
+                  }}
+                >
+                  {programOutput}
+                </pre>
+            </div>
+         )}
+
+         {/* Display Transpiled Code (if toggled) */}
+         {showTranspiledInTerminal && transpiledCode && (
+           <div className="transpiled-code-in-terminal" style={{ marginTop: '10px', borderTop: '1px dashed #649ad1', paddingTop: '10px' }}>
+             <div style={{ fontWeight: 'bold', color: '#649ad1', marginBottom: '5px', marginLeft: '15px' }}>Generated C Code:</div>
+             <pre
+               style={{
+                 backgroundColor: '#2d2d2d', padding: '10px', borderRadius: '4px',
+                 overflowX: 'auto', color: '#d4d4d4', fontSize: '13px',
+                 fontFamily: 'Consolas, "Courier New", monospace', lineHeight: '1.4',
+                 marginTop: '5px', marginLeft: '15px', marginRight: '10px'
+               }}
+             >
+               {transpiledCode}
+             </pre>
+           </div>
+         )}
+
+         {/* Blinking cursor simulation at the end (Optional) */}
+         {/* You might remove this or adjust its position based on the fixed status lines */}
+         {/* <div style={{ display: 'flex', alignItems: 'center', marginLeft: '15px', marginTop: '10px' }}>
+             <span>&gt; </span>
+             <div className="terminal-cursor" style={{ display: 'inline-block', width: '8px', height: '16px', backgroundColor: '#d4d4d4', opacity: 0.7, animation: 'blink 1s step-end infinite', marginLeft: '4px' }}/>
+         </div> */}
+         <style>
           {`
-            @keyframes blink {
-              0%, 100% { opacity: 0; }
-              50% { opacity: 0.7; }
-            }
+            @keyframes blink { 0%, 100% { opacity: 0; } 50% { opacity: 0.7; } }
+            .terminal-content::-webkit-scrollbar { width: 8px; }
+            .terminal-content::-webkit-scrollbar-track { background: #1e1e1e; border-radius: 4px; }
+            .terminal-content::-webkit-scrollbar-thumb { background: #649ad1; border-radius: 4px; }
+            .terminal-content::-webkit-scrollbar-thumb:hover { background: #5a8ac0; }
           `}
         </style>
-
-        {displayLines.length === 0 && !programOutput && !runOutput && !runError ? (
-          <div className="terminal-line info" style={{ marginLeft: '15px' }}>
-            Ready
-          </div>
-        ) : (
-          <>
-            {displayLines.map((item, index) => (
-              <div
-                key={index}
-                className={`terminal-line ${item.type}`}
-                style={{
-                  color: item.type === 'error' ? '#f48771' :
-                    item.type === 'success' ? '#89d185' :
-                      item.type === 'warning' ? '#cca700' : '#d4d4d4',
-                  marginBottom: '10px',
-                  padding: '5px 0',
-                  marginLeft: '15px',
-                  borderBottom: (index < displayLines.length - 1 || programOutput || runOutput || runError) ? '1px solid #333' : 'none'
-                }}
-              >
-                <span style={{ fontWeight: 'bold', marginRight: '8px' }}>
-                  {item.category}:
-                </span>
-                {item.text}
-              </div>
-            ))}
-
-            {/* Show semantic/transpiler run error */}
-            {runError && (
-              <div
-                className="terminal-line error"
-                style={{
-                  color: '#f48771',
-                  marginBottom: '10px',
-                  padding: '5px 0',
-                  marginLeft: '15px',
-                  borderBottom: '1px solid #333'
-                }}
-              >
-                <span style={{ fontWeight: 'bold', marginRight: '8px' }}>
-                  Run Error:
-                </span>
-                {runError}
-              </div>
-            )}
-
-            {/* Program output section */}
-            {(runOutput || programOutput) && (
-              <div
-                className="program-output"
-                style={{
-                  marginTop: '15px',
-                  marginLeft: '15px',
-                  borderTop: displayLines.length > 0 ? '1px solid #555' : 'none',
-                  paddingTop: displayLines.length > 0 ? '10px' : '0'
-                }}
-              >
-                <div style={{ fontWeight: 'bold', marginBottom: '10px', color: '#89d185' }}>
-                  Program Output:
-                </div>
-                <pre
-                  style={{
-                    backgroundColor: '#2d2d2d',
-                    padding: '10px',
-                    borderRadius: '4px',
-                    overflowX: 'auto',
-                    color: '#ffffff',
-                    fontSize: '14px',
-                    fontFamily: 'Consolas, monospace',
-                    lineHeight: '1.4',
-                    marginTop: '5px'
-                  }}
-                >
-                  {runOutput || programOutput}
-                </pre>
-              </div>
-            )}
-
-            {/* Show transpiled code in terminal if requested */}
-            {showTranspiledInTerminal && (runTranspiledCode || transpiledCode) && (
-              <div
-                className="transpiled-code-in-terminal"
-                style={{
-                  marginTop: '15px',
-                  marginLeft: '15px',
-                  borderTop: '1px solid #555',
-                  paddingTop: '10px'
-                }}
-              >
-                <div style={{ fontWeight: 'bold', marginBottom: '10px', color: '#89d185' }}>
-                  Generated C Code:
-                </div>
-                <pre
-                  style={{
-                    backgroundColor: '#2d2d2d',
-                    padding: '10px',
-                    borderRadius: '4px',
-                    overflowX: 'auto',
-                    color: '#d4d4d4',
-                    fontSize: '13px',
-                    fontFamily: 'Consolas, monospace',
-                    lineHeight: '1.4',
-                    marginTop: '5px'
-                  }}
-                >
-                  {runTranspiledCode || transpiledCode}
-                </pre>
-              </div>
-            )}
-          </>
-        )}
       </div>
     </div>
   );
