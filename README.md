@@ -44,6 +44,7 @@ Follow these instructions to set up and run the Conso Web IDE locally.
     *   **Linux:** Usually pre-installed or installable via package manager (e.g., `sudo apt update && sudo apt install build-essential`).
     *   **macOS:** Install Xcode Command Line Tools (`xcode-select --install`).
     *   **Windows:** Install MinGW-w64 (recommended via [MSYS2](https://www.msys2.org/)) or TDM-GCC and ensure `gcc` is added to your system's PATH.
+    *   **Verification:** After installation, open a new terminal or command prompt and run `gcc --version`. You should see output indicating the GCC version. If you get a "command not found" error, ensure the installation was successful and that GCC's `bin` directory is in your system's PATH environment variable.
 
 ### Frontend Setup
 
@@ -84,11 +85,17 @@ Follow these instructions to set up and run the Conso Web IDE locally.
     pip install fastapi uvicorn pydantic "uvicorn[standard]"
     ```
     *You might need to install other libraries if import errors occur based on the full codebase.*
-4.  **Start the backend server:**
-    ```bash
-    uvicorn server:app --reload --host 0.0.0.0 --port 5000
-    ```
-    The backend API should now be running at `http://localhost:5000`.
+4.  **Start the backend servers:**
+    *   **Main API Server:** Open a terminal in the `server` directory (with the virtual environment activated) and run:
+        ```bash
+        uvicorn server:app --reload --host 0.0.0.0 --port 5000
+        ```
+        The backend API should now be running at `http://localhost:5000`.
+    *   **WebSocket Server:** Open *another* terminal in the `server` directory (with the virtual environment activated) and run:
+        ```bash
+        uvicorn websocket_server:app --reload --port 5001
+        ```
+        The WebSocket server should now be running at `ws://localhost:5001`.
 
 ## 🔧 How to Use
 
