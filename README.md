@@ -109,10 +109,7 @@ The backend exposes the following API endpoints (running on `http://localhost:50
 *   `POST /api/run/execute`: Executes the code after receiving necessary user inputs.
 *   `GET /api/health`: Health check endpoint for the server.
 
-## 🤝 Contributing
+## 👤 Author
 
-Contributions are welcome! Please feel free to submit pull requests or open issues. (Add more specific guidelines if desired).
-
-## 📄 License
-
-(Specify your license here, e.g., MIT License)
+*   **GitHub:** [@yuyuhiei](https://github.com/yuyuhiei)
+*   **Role:** Fullstack Developer
