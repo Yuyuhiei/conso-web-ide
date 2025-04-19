@@ -1,205 +1,118 @@
 # Conso Web IDE
 
-A web-based IDE for the Conso programming language with real-time lexical, syntax, and semantic analysis.
+A web-based Integrated Development Environment (IDE) for the custom programming language "Conso". This IDE allows users to write, analyze (lexically, syntactically, semantically), transpile (to C), and run Conso code directly in the browser.
 
-## Project Overview
+## ✨ Features
 
-This project provides a modern web-based development environment for the Conso programming language, featuring:
+*   **Code Editor:** Feature-rich code editing experience powered by Monaco Editor.
+*   **Lexical Analysis:** Tokenize Conso code to identify basic language elements.
+*   **Syntax Analysis:** Parse the token stream to check for grammatical correctness according to Conso's rules.
+*   **Semantic Analysis:** Verify the meaning and consistency of the code (e.g., type checking, variable declarations).
+*   **Transpilation:** Convert valid Conso code into equivalent C code.
+*   **Execution:** Compile and run the generated C code to see the output.
+*   **Input Handling:** Supports interactive input prompts defined within the Conso code.
+*   **Real-time Feedback:** Provides immediate feedback on errors during different analysis phases.
 
-- Monaco Editor with custom syntax highlighting for Conso
-- Real-time lexical analysis with token visualization
-- Syntax validation with immediate feedback
-- Semantic analysis capabilities
-- File saving and loading functionality
+## 💻 Tech Stack
 
-## Setup Instructions
+**Frontend:**
+![React](https://img.shields.io/badge/React-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black)
+![HTML5](https://img.shields.io/badge/HTML5-E34F26?style=for-the-badge&logo=html5&logoColor=white)
+![CSS3](https://img.shields.io/badge/CSS3-1572B6?style=for-the-badge&logo=css3&logoColor=white)
+![Monaco Editor](https://img.shields.io/badge/Monaco_Editor-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)
+![Axios](https://img.shields.io/badge/Axios-5A29E4?style=for-the-badge&logo=axios&logoColor=white)
+![React Router](https://img.shields.io/badge/React_Router-CA4245?style=for-the-badge&logo=reactrouter&logoColor=white)
+
+**Backend:**
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![Uvicorn](https://img.shields.io/badge/Uvicorn-ff9900?style=for-the-badge&logo=python&logoColor=white) <!-- Uvicorn doesn't have a standard logo on shields.io -->
+
+**Compilation/Execution:**
+![GCC](https://img.shields.io/badge/GCC-007396?style=for-the-badge&logo=gnu&logoColor=white) <!-- Using GNU logo as proxy -->
+
+## 🚀 Getting Started
+
+Follow these instructions to set up and run the Conso Web IDE locally.
 
 ### Prerequisites
 
-- Node.js 14+ and npm
-- Python 3.7+
-- Your existing Conso language implementation files
-
-### Backend Setup
-
-1. Create a Python virtual environment:
-
-```bash
-# Navigate to server directory
-cd server
-
-# Create virtual environment
-python -m venv venv
-
-# Activate the virtual environment
-# Windows
-venv\Scripts\activate
-# macOS/Linux
-source venv/bin/activate
-```
-
-2. Install the required Python packages:
-
-```bash
-pip install fastapi uvicorn websockets python-multipart
-```
-
-3. Make sure you have the following Conso language files in your server directory:
-   - lexer.py
-   - parser.py
-   - definitions.py
-   - semantic.py
-   - server.py (the new FastAPI server)
-   - websocket_server.py (the new WebSocket server)
-
-4. Start the REST API server:
-
-```bash
-# From the server directory
-uvicorn server:app --reload --port 5000
-```
-
-5. Start the WebSocket server (in a new terminal window):
-
-```bash
-# From the server directory with venv activated
-uvicorn websocket_server:app --reload --port 5001
-```
+*   **Node.js & npm:** Required for the frontend. Download from [nodejs.org](https://nodejs.org/).
+*   **Python 3.x & pip:** Required for the backend. Download from [python.org](https://python.org/).
+*   **GCC (C Compiler):** Required for compiling and running the transpiled code.
+    *   **Linux:** Usually pre-installed or installable via package manager (e.g., `sudo apt update && sudo apt install build-essential`).
+    *   **macOS:** Install Xcode Command Line Tools (`xcode-select --install`).
+    *   **Windows:** Install MinGW-w64 (recommended via [MSYS2](https://www.msys2.org/)) or TDM-GCC and ensure `gcc` is added to your system's PATH.
 
 ### Frontend Setup
 
-Make sure your React project is set up with the required services and components:
+1.  **Navigate to the project root directory:**
+    ```bash
+    cd /path/to/conso-web-ide
+    ```
+2.  **Install dependencies:**
+    ```bash
+    npm install
+    ```
+3.  **Start the development server:**
+    ```bash
+    npm start
+    ```
+    The frontend should now be running, typically at `http://localhost:3000`.
 
-1. Place the API and WebSocket service files in your `src/services` directory:
-   - api.js
-   - websocketService.js
+### Backend Setup
 
-2. Place the Conso language configuration file in your `src/utils` directory:
-   - consoLanguageConfig.js
+1.  **Navigate to the server directory:**
+    ```bash
+    cd /path/to/conso-web-ide/server
+    ```
+2.  **Create and activate a virtual environment (recommended):**
+    ```bash
+    # Create (if venv directory doesn't exist or you want a fresh one)
+    python -m venv venv
 
-3. Start your React development server:
+    # Activate
+    # Windows (Command Prompt/PowerShell)
+    .\venv\Scripts\activate
+    # Linux/macOS (Bash/Zsh)
+    source venv/bin/activate
+    ```
+3.  **Install Python dependencies:**
+    *Note: A `requirements.txt` file is recommended for easier dependency management. Since one isn't present, install the core known dependencies:*
+    ```bash
+    pip install fastapi uvicorn pydantic "uvicorn[standard]"
+    ```
+    *You might need to install other libraries if import errors occur based on the full codebase.*
+4.  **Start the backend server:**
+    ```bash
+    uvicorn server:app --reload --host 0.0.0.0 --port 5000
+    ```
+    The backend API should now be running at `http://localhost:5000`.
 
-```bash
-# From the project root
-npm start
-```
+## 🔧 How to Use
 
-## Usage
+1.  Ensure both the frontend and backend servers are running.
+2.  Open your web browser and navigate to the frontend URL (e.g., `http://localhost:3000`).
+3.  Write your Conso code in the editor provided.
+4.  Use the buttons (likely labeled "Lex", "Parse", "Semantic", "Run", etc.) to trigger the different analysis phases or to transpile and execute the code.
+5.  Output and errors will be displayed in designated areas of the IDE.
 
-1. The IDE will automatically connect to the backend services on startup
-2. Type or load Conso code in the editor
-3. Real-time lexical and syntax analysis will appear in the token table and terminal
-4. Click "Semantic Analysis" to perform a semantic analysis when syntax is valid
-5. Use the Save/Load buttons to manage your Conso files
+## ⚙️ API Endpoints
 
-## Project Structure
+The backend exposes the following API endpoints (running on `http://localhost:5000`):
 
-```
-conso-web-ide/               # Root project folder
-├── src/                     # React frontend
-│   ├── components/          # React components
-│   │   ├── Editor.js        # Monaco editor component
-│   │   ├── Terminal.js      # Output/error display
-│   │   └── TokenTable.js    # Lexical analysis display
-│   ├── services/            # Backend communication
-│   │   ├── api.js           # REST API client
-│   │   └── websocketService.js # WebSocket client
-│   ├── utils/               # Utilities
-│   │   └── consoLanguageConfig.js # Monaco editor language config
-│   └── App.js               # Main application component
-├── server/                  # Python backend
-│   ├── lexer.py             # Conso lexer
-│   ├── parser.py            # Conso parser
-│   ├── definitions.py       # Shared definitions
-│   ├── semantic.py          # Semantic analyzer 
-│   ├── server.py            # FastAPI REST server
-│   └── websocket_server.py  # WebSocket server
-└── README.md                # This file
-```
+*   `POST /api/lexer`: Performs lexical analysis on the provided code.
+*   `POST /api/parser`: Performs syntax analysis.
+*   `POST /api/semantic`: Performs semantic analysis.
+*   `POST /api/run/initiate`: Initiates the run process, performs all analyses, and checks if user input is required. Returns prompts or executes directly.
+*   `POST /api/run/execute`: Executes the code after receiving necessary user inputs.
+*   `GET /api/health`: Health check endpoint for the server.
 
-## Troubleshooting
+## 🤝 Contributing
 
-- **WebSocket Connection Issues**: Ensure both the API server (port 5000) and WebSocket server (port 5001) are running
-- **CORS Errors**: If you encounter CORS issues, verify the CORS middleware in the server.py file is properly configured
-- **Module Import Errors**: Make sure all Python files are in the correct server directory and the virtual environment is activated
-- **Token Parsing Issues**: If you encounter issues with the parser not receiving the correct tokens, check that the global token list in definitions.py is being properly updated
-- **Monaco Editor Not Loading**: Ensure the Monaco Editor is properly installed with `npm install @monaco-editor/react`
+Contributions are welcome! Please feel free to submit pull requests or open issues. (Add more specific guidelines if desired).
 
-## Working with the Conso Language
+## 📄 License
 
-### Basic Syntax
-
-The Conso language has the following basic elements:
-
-```
-# Variable declarations
-nt myNumber = 5;
-dbl myDecimal = 3.14;
-strng myString = "Hello Conso";
-bln myBoolean = tr;
-chr myChar = 'A';
-
-# Control structures
-f (myBoolean) {
-    prnt("Condition is true");
-}
-
-fr (nt i = 0; i < 10; i++) {
-    prnt(i);
-}
-
-# Functions
-fnctn vd greet() {
-    prnt("Hello World");
-}
-
-# Main function
-mn() {
-    greet();
-}
-```
-
-### Code Examples
-
-The IDE allows you to write and test Conso code with real-time feedback. Here are some examples to try:
-
-1. **Hello World**:
-```
-mn() {
-    prnt("Hello, Conso!");
-}
-```
-
-2. **Fibonacci Sequence**:
-```
-fnctn nt fibonacci(nt n) {
-    f (n <= 1) {
-        rtrn n;
-    }
-    rtrn fibonacci(n-1) + fibonacci(n-2);
-}
-
-mn() {
-    fr (nt i = 0; i < 10; i++) {
-        prnt(fibonacci(i));
-    }
-}
-```
-
-## Extending the IDE
-
-You can extend this web IDE with additional features:
-
-1. **Debugging Tools**: Add breakpoints, step execution, and variable inspection
-2. **Project Management**: Implement multi-file projects and directory structure
-3. **Code Formatting**: Add automatic code formatting for Conso
-4. **Theming**: Implement light/dark themes and customizable editor options
-5. **Code Export**: Add options to export code to different formats
-
-## Contributing
-
-Contributions to the Conso Web IDE are welcome! Please feel free to submit issues or pull requests.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+(Specify your license here, e.g., MIT License)
