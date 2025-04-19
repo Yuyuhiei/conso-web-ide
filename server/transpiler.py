@@ -1023,18 +1023,20 @@ class ConsoTranspilerTokenBased:
 
     def get_expression_type(self, expr_tokens):
         """
-        Determines the resulting C type of an expression represented by tokens.
+        Determines the resulting C type ('nt', 'dbl', 'strng', 'bln', 'chr', or None)
+        of an expression represented by tokens.
         Prioritizes operator type over initial operand type.
-        Relies on symbol table lookup. Includes DEBUG prints.
+        Relies on symbol table lookup.
         """
-        print(f"[DEBUG get_expression_type] Input tokens: {expr_tokens}") # DEBUG
+        # print(f"[DEBUG get_expression_type] Input tokens: {expr_tokens}") # Uncomment for deep debug
         if not expr_tokens:
-            print("[DEBUG get_expression_type] Returning: None (empty tokens)") # DEBUG
+            # print("[DEBUG get_expression_type] Returning: None (empty tokens)") # Uncomment for deep debug
             return None
 
         result_type = None # Initialize result type
 
         # --- Operator-based type determination FIRST ---
+        # Check for comparison or logical operators first, as they dictate the result type (boolean -> int)
         is_comparison_or_logical = any(
             t[0] in ['==', '!=', '<', '>', '<=', '>=', '&&', '||']
             for t in expr_tokens
@@ -1046,36 +1048,80 @@ class ConsoTranspilerTokenBased:
             has_arithmetic_op = any(t[0] in ['+', '-', '*', '/'] for t in expr_tokens)
             if has_arithmetic_op:
                 promotes_to_double = False
-                for tok_type, tok_val in expr_tokens:
+                # Iterate through tokens to check operand types
+                i = 0
+                while i < len(expr_tokens):
+                    tok_type, tok_val = expr_tokens[i]
+
+                    # Check for double literals OR division operator (which often results in double)
                     if tok_type in ['dbllit', 'NEGDOUBLELIT', '/']:
-                        promotes_to_double = True; break
+                        promotes_to_double = True
+                        break # Found a double source, no need to check further
+
+                    # Check if an identifier is involved
                     if tok_type == 'id':
-                        if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                            symbol = self.symbol_table.lookup(tok_val)
-                            if symbol and getattr(symbol, 'data_type', None) == 'dbl':
-                                promotes_to_double = True; break
+                        # --- MODIFICATION START: Check for struct access pattern (id . id) ---
+                        # Look ahead for '.' followed by 'id'
+                        if i + 2 < len(expr_tokens) and expr_tokens[i+1][0] == '.' and expr_tokens[i+2][0] == 'id':
+                            struct_var_name = tok_val
+                            member_name = expr_tokens[i+2][1]
+                            # print(f"[DEBUG get_expression_type] Checking struct member: {struct_var_name}.{member_name}") # DEBUG
+                            if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                                struct_var_symbol = self.symbol_table.lookup(struct_var_name)
+                                if struct_var_symbol and hasattr(struct_var_symbol, 'data_type'):
+                                    struct_type_name = struct_var_symbol.data_type
+                                    # Look up the struct definition itself to find member types
+                                    struct_def_symbol = self.symbol_table.lookup(struct_type_name)
+                                    if struct_def_symbol and hasattr(struct_def_symbol, 'members') and hasattr(struct_def_symbol.members, 'get'):
+                                        member_symbol = struct_def_symbol.members.get(member_name)
+                                        # Check if the MEMBER's type is double
+                                        if member_symbol and getattr(member_symbol, 'data_type', None) == 'dbl':
+                                            # print(f"[DEBUG get_expression_type] Struct member {member_name} is dbl.") # DEBUG
+                                            promotes_to_double = True
+                                            break # Found a double source
+                            # Skip the '.' and member 'id' tokens in the next iteration
+                            i += 2
+                        # --- MODIFICATION END ---
+                        else:
+                            # Regular ID lookup (not part of struct access pattern)
+                            # print(f"[DEBUG get_expression_type] Checking identifier: {tok_val}") # DEBUG
+                            if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                                symbol = self.symbol_table.lookup(tok_val)
+                                # Check if the IDENTIFIER's type is double
+                                if symbol and getattr(symbol, 'data_type', None) == 'dbl':
+                                    # print(f"[DEBUG get_expression_type] Identifier {tok_val} is dbl.") # DEBUG
+                                    promotes_to_double = True
+                                    break # Found a double source
+
+                    i += 1 # Move to the next token
+
+                # Assign result type based on whether promotion occurred
                 result_type = 'dbl' if promotes_to_double else 'nt'
 
-        # --- If no operators determined the type, check structure ---
+        # --- If no operators determined the type, check structure (single token, array access, etc.) ---
         if result_type is None:
-            if len(expr_tokens) == 1:
-                tok_type, tok_val = expr_tokens[0]
-                if tok_type == 'strnglit': result_type = 'strng'
-                elif tok_type == 'chrlit': result_type = 'chr'
-                elif tok_type in ['dbllit', 'NEGDOUBLELIT']: result_type = 'dbl'
-                elif tok_type in ['ntlit', 'NEGINTLIT']: result_type = 'nt'
-                elif tok_type == 'blnlit': result_type = 'bln'
-                elif tok_type == 'id':
-                    if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                        symbol = self.symbol_table.lookup(tok_val)
-                        result_type = getattr(symbol, 'data_type', None) if symbol else None
-            # Check complex structures (heuristics)
-            elif len(expr_tokens) >= 3 and expr_tokens[0][0] == 'id' and expr_tokens[1][0] == '[' and expr_tokens[-1][0] == ']':
+             # Check simple cases first: single literal or variable
+             if len(expr_tokens) == 1:
+                 tok_type, tok_val = expr_tokens[0]
+                 if tok_type == 'strnglit': result_type = 'strng'
+                 elif tok_type == 'chrlit': result_type = 'chr'
+                 elif tok_type in ['dbllit', 'NEGDOUBLELIT']: result_type = 'dbl'
+                 elif tok_type in ['ntlit', 'NEGINTLIT']: result_type = 'nt'
+                 elif tok_type == 'blnlit': result_type = 'bln'
+                 elif tok_type == 'id':
+                     if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                         symbol = self.symbol_table.lookup(tok_val)
+                         result_type = getattr(symbol, 'data_type', None) if symbol else None
+             # Check complex structures - Array Element Access (e.g., arr[index])
+             elif len(expr_tokens) >= 3 and expr_tokens[0][0] == 'id' and expr_tokens[1][0] == '[' and expr_tokens[-1][0] == ']':
                  base_var_name = expr_tokens[0][1]
                  if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
                      symbol = self.symbol_table.lookup(base_var_name)
+                     # Type of an array element is the base type of the array
                      result_type = getattr(symbol, 'data_type', None) if symbol else None
-            elif len(expr_tokens) >= 3 and expr_tokens[-1][0] == 'id' and expr_tokens[-2][0] == '.':
+             # Check complex structures - Struct Member Access (e.g., struct.member)
+             elif len(expr_tokens) >= 3 and expr_tokens[-1][0] == 'id' and expr_tokens[-2][0] == '.':
+                 # This heuristic assumes simple id.id access. More complex chains might need recursion.
                  if len(expr_tokens) == 3 and expr_tokens[0][0] == 'id': # Simple id.id
                      struct_var_name = expr_tokens[0][1]
                      member_name = expr_tokens[-1][1]
@@ -1087,13 +1133,15 @@ class ConsoTranspilerTokenBased:
                              if struct_def_symbol and hasattr(struct_def_symbol, 'members') and hasattr(struct_def_symbol.members, 'get'):
                                  member_symbol = struct_def_symbol.members.get(member_name)
                                  if member_symbol: result_type = getattr(member_symbol, 'data_type', None)
-            elif len(expr_tokens) >= 3 and expr_tokens[0][0] == 'id' and expr_tokens[1][0] == '(' and expr_tokens[-1][0] == ')':
+             # Check complex structures - Function Call (e.g., func(args))
+             elif len(expr_tokens) >= 3 and expr_tokens[0][0] == 'id' and expr_tokens[1][0] == '(' and expr_tokens[-1][0] == ')':
                  func_name = expr_tokens[0][1]
                  if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
                      symbol = self.symbol_table.lookup(func_name)
+                     # Type of a function call is its return type
                      result_type = getattr(symbol, 'data_type', None) if symbol else None
 
-        print(f"[DEBUG get_expression_type] Returning type: {result_type}") # DEBUG
+        # print(f"[DEBUG get_expression_type] Returning type: {result_type}") # Uncomment for deep debug
         return result_type
 
     def _format_token_sequence(self, tokens_to_format):
