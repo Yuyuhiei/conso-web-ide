@@ -198,7 +198,7 @@ const InputModal = ({ isVisible, prompts, onSubmit, onClose }) => {
               disabled={!isFormValid}
               title={isFormValid ? "Submit inputs" : "Please fix errors or fill all inputs"}
             >
-              Submit Inputs
+              Submit Inputs 
             </button>
             <button type="button" onClick={onClose} className="close-button">Cancel</button>
           </div>
