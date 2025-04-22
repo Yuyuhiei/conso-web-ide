@@ -224,7 +224,7 @@ def add_all_set():
     add_set(["++", "--"], "<unary_entities>", ["<unary_inc/dec>", "id"])
     add_set(["++", "--"], "<unary_next>", ["<unary_inc/dec>"])
     add_set(["[", ".", "("], "<unary_next>", ["<id_entity_next>"]) #di ko alam pano lalagay yung null sa first set ng <id_entity_next>
-    add_set(["+", "-", "*", "/", "%", ",", ";", ")", "&&", "||", "==", "!=", "<=", ">=", "<", ">"], "<unary_next>", ["null"])
+    add_set(["+", "-", "*", "/", "%", ",", ";", ")", "&&", "||", "==", "!=", "<=", ">=", "<", ">", "]"], "<unary_next>", ["null"])
     add_set(["+", "-", "*", "/", "%"], "<arithmetic_nt_next>", ["<arithmetic_operator>", "<nt_math_val>", "<arithmetic_nt_next>"])
     add_set([",", ")", "]", ";"], "<arithmetic_nt_next>", ["null"])
     add_set(["[", "."], "<id_entity_next>", ["<id_next>"]) # di ko alam pano lalagay yung null sa first set ng <id_next>
