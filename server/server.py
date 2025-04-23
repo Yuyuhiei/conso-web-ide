@@ -85,7 +85,8 @@ def normalize_code(code: str) -> str:
 def scan_for_npt(tokens: List[Tuple[str, Any, int, int]], symbol_table) -> List[InputPrompt]:
     """
     Scans the token list for 'npt' assignments and extracts variable names,
-    prompts, line numbers, AND variable types using the provided symbol table.
+    prompts, line numbers, AND reconstructed variable types (including array notation)
+    using the provided symbol table.
 
     Args:
         tokens: List of (type, value, line, column) tuples.
@@ -93,15 +94,17 @@ def scan_for_npt(tokens: List[Tuple[str, Any, int, int]], symbol_table) -> List[
                       the variables are expected to be defined.
 
     Returns:
-        A list of InputPrompt objects including variable_type.
+        A list of InputPrompt objects including the full variable_type string (e.g., 'nt', 'chr[100]').
     """
     prompts = []
     i = 0
     while i < len(tokens):
         # Pattern: id = npt ( string_literal ) ;
+        # Make sure we don't go out of bounds when checking ahead
         if tokens[i][0] == 'id' and i + 6 < len(tokens):
             var_name = tokens[i][1]
             line_num = tokens[i][2]
+            # Check the sequence of tokens for the npt assignment pattern
             if tokens[i+1][0] == '=' and \
                tokens[i+2][0] == 'npt' and \
                tokens[i+3][0] == '(' and \
@@ -110,28 +113,42 @@ def scan_for_npt(tokens: List[Tuple[str, Any, int, int]], symbol_table) -> List[
                tokens[i+6][0] == ';':
 
                 prompt_text = tokens[i+4][1]
-                var_type = "unknown" # Default type if lookup fails
+                variable_type_string = "unknown" # Default type if lookup fails
 
                 # --- Look up variable type in the provided symbol table ---
                 if symbol_table and hasattr(symbol_table, 'lookup'):
                     symbol_entry = symbol_table.lookup(var_name)
-                    if symbol_entry and hasattr(symbol_entry, 'data_type'):
-                        var_type = symbol_entry.data_type
+                    if symbol_entry:
+                        base_type = getattr(symbol_entry, 'data_type', 'unknown')
+                        is_array = getattr(symbol_entry, 'is_array', False)
+                        array_sizes = getattr(symbol_entry, 'array_sizes', [])
+
+                        if is_array:
+                            # Reconstruct the array type string (e.g., "chr[100]", "nt[5]")
+                            # Assuming 1D arrays for now based on previous context
+                            size_str = str(array_sizes[0]) if array_sizes else ""
+                            variable_type_string = f"{base_type}[{size_str}]"
+                            # Add logic here for 2D if needed:
+                            # if len(array_sizes) == 2:
+                            #    variable_type_string = f"{base_type}[{array_sizes[0]}][{array_sizes[1]}]"
+                        else:
+                            # It's a single variable
+                            variable_type_string = base_type
                     else:
-                        print(f"Warning: Variable '{var_name}' for npt prompt not found in provided symbol table scope during scan.")
+                        print(f"Warning: Variable '{var_name}' for npt prompt not found in provided symbol table scope ('{symbol_table.scope_name}') during scan.")
                 else:
                      print(f"Warning: Symbol table not available or no lookup method during npt scan for '{var_name}'.")
-                # --- End type lookup ---
+                # --- End type lookup and reconstruction ---
 
                 prompts.append(InputPrompt(
                     variable_name=var_name,
                     prompt_text=prompt_text,
                     line=line_num,
-                    variable_type=var_type # Include the type
+                    variable_type=variable_type_string # Use the reconstructed string
                 ))
-                i += 7
-                continue
-        i += 1
+                i += 7 # Move index past the processed pattern
+                continue # Continue scanning from the new index
+        i += 1 # Move to the next token if pattern didn't match
     return prompts
 
 # compile_and_run_c (Keep as is)

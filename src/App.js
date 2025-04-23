@@ -364,7 +364,7 @@ const MainApp = () => {
       const reader = new FileReader();
       reader.onload = (e) => {
         const content = e.target.result;
-        if (files.length >= 10) { alert('Maximum of 10 files reached.'); return; }
+        if (files.length >= 15) { alert('Maximum of 15 files reached.'); return; }
         const newFile = { id: uuidv4(), name: file.name.endsWith('.cns') ? file.name : `${file.name}.cns`, content: content };
         setFiles(prevFiles => [...prevFiles, newFile]);
         setCurrentFileId(newFile.id); // Switch to the newly opened file
@@ -402,7 +402,7 @@ const MainApp = () => {
     }
    };
   const handleFileCreate = (name) => { /* Keep implementation, ensure states are reset */
-    if (files.length >= 10) { alert('Maximum of 10 files reached.'); return; }
+    if (files.length >= 15) { alert('Maximum of 15 files reached.'); return; }
     const newFile = { id: uuidv4(), name: name, content: '' };
     setFiles(prevFiles => [...prevFiles, newFile]);
     setCurrentFileId(newFile.id);

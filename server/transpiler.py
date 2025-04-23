@@ -788,8 +788,11 @@ class ConsoTranspilerTokenBased:
     def _process_input_from_tokens(self):
         """
         Processes an input statement (var = npt("prompt");) by generating
-        a C assignment using pre-collected user input.
+        C assignment statements for both single variables and array elements,
+        using pre-collected user input strings.
         Relies on self.user_inputs dictionary and self.symbol_table.
+        Uses 'array_sizes' attribute from the symbol table.
+        Handles shorter input for 'chr' arrays by null-terminating.
         """
         start_pos = self.current_pos
         line_num = '?'
@@ -803,10 +806,15 @@ class ConsoTranspilerTokenBased:
             self._consume('npt')
             self._consume('(')
 
-            # Consume the prompt string literal if present, but we don't use it here
-            # The prompt was already extracted in the pre-scan phase in server.py
+            # Consume the prompt string literal (we don't use its value here)
             if self._peek() == 'strnglit':
                 self._consume('strnglit')
+            else:
+                # Handle case where prompt might be missing or different token type
+                # Depending on strictness, either raise error or just skip until ')'
+                # Assuming prompt is always a string literal based on previous logic
+                raise TranspilerError("Expected string literal prompt inside npt()", line_num)
+
 
             # Consume ')' and ';'
             self._consume(')')
@@ -818,93 +826,209 @@ class ConsoTranspilerTokenBased:
                 # ensuring all required inputs are collected.
                 raise TranspilerError(f"Missing input value for variable '{var_name}' during transpilation", line_num)
 
-            # Get the raw input string provided by the user
-            input_value_str = self.user_inputs[var_name]
+            # Get the raw input string provided by the user and trim whitespace
+            input_value_str = self.user_inputs[var_name].strip() # Trim leading/trailing whitespace
 
-            # --- Determine variable type from symbol table ---
+            # --- Determine variable type and array status from symbol table ---
             var_type = None
-            is_array = False # Check if it's an array type if needed
+            is_array = False
+            # CHANGE: Use array_sizes instead of dimensions
+            array_sizes = []
+            symbol = None
+
+            # Ensure symbol_table is usable and has lookup
             if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                # Assuming 'lookup' searches the current scope appropriately.
-                # You might need to pass the specific function scope's symbol table
-                # to the transpiler or ensure lookup handles scopes correctly.
                 symbol = self.symbol_table.lookup(var_name)
                 if symbol:
                     var_type = getattr(symbol, 'data_type', None)
                     is_array = getattr(symbol, 'is_array', False)
+                    # CHANGE: Get 'array_sizes' instead of 'dimensions'
+                    array_sizes = getattr(symbol, 'array_sizes', [])
                 else:
-                     # It's possible the variable is declared globally, try looking up there if applicable
-                     # This depends heavily on your symbol table structure.
-                     # For simplicity, we raise an error if not found in the provided table.
+                     # Variable not found in the current scope's symbol table
                      raise TranspilerError(f"Variable '{var_name}' not found in symbol table for input", line_num)
             else:
-                 # This should not happen if semantic analysis passed, but check anyway.
-                 raise TranspilerError("Symbol table not available for input processing", line_num)
+                 # Symbol table wasn't provided or doesn't have a lookup method
+                 # Handle this based on requirements - maybe raise error or make assumptions
+                 # For now, raise an error as type info is crucial
+                 raise TranspilerError("Symbol table not available or invalid for input processing", line_num)
 
             if var_type is None:
                  # Symbol found, but no type information? Semantic analysis should catch this.
                  raise TranspilerError(f"Could not determine type for variable '{var_name}' during input processing", line_num)
 
-            # --- Format the input string into a C literal based on type ---
-            c_literal = ""
-            try:
-                if var_type == 'nt':
-                    # Convert to int, then back to string for C code
-                    c_literal = str(int(input_value_str))
-                elif var_type == 'dbl':
-                     # Convert to float, format, then back to string
-                     # Use a standard float representation, C compiler handles precision.
-                     c_literal = str(float(input_value_str))
+            # --- Generate C code based on whether it's an array ---
+
+            if is_array:
+                # --- Array Input Handling (Generate Assignments) ---
+                # CHANGE: Check array_sizes instead of dimensions
+                if not array_sizes:
+                    # CHANGE: Update error message
+                    raise TranspilerError(f"Array '{var_name}' has no size information (array_sizes) in symbol table", line_num)
+                # Check array_dimensions attribute from semantic analysis for multi-dim check
+                array_dimensions_count = getattr(symbol, 'array_dimensions', 0)
+                if array_dimensions_count > 1:
+                     # For simplicity, only handle 1D arrays for input based on examples
+                     raise TranspilerError(f"Multi-dimensional array input for '{var_name}' using 'npt' is not supported.", line_num)
+
+                try:
+                    # Ensure dimension is an integer (assuming it's stored as int or str)
+                    # CHANGE: Use array_sizes[0]
+                    size = int(array_sizes[0])
+                except (ValueError, TypeError, IndexError):
+                     # If dimension is complex expression, semantic analysis should resolve it first.
+                     # For now, assume it's a simple literal size.
+                     # CHANGE: Update error message
+                     size_info = array_sizes[0] if array_sizes else "unknown"
+                     raise TranspilerError(f"Invalid or unresolved dimension size '{size_info}' for array '{var_name}'", line_num)
+
+                if size <= 0:
+                     raise TranspilerError(f"Array '{var_name}' has non-positive size '{size}'", line_num)
+
+                assignments = [] # To store generated C assignment lines
+
+                # --- Handle nt, dbl, bln arrays ---
+                if var_type in ['nt', 'dbl', 'bln']:
+                    # Split the input string by spaces
+                    input_elements = input_value_str.split()
+                    num_elements = len(input_elements)
+
+                    # Check if the number of input elements matches the declared size
+                    if num_elements != size:
+                         raise TranspilerError(f"Number of input elements ({num_elements}) for {var_type} array '{var_name}' does not match declared size ({size})", line_num)
+
+                    for i in range(size):
+                        element_str = input_elements[i]
+                        c_literal = ""
+                        try:
+                            if var_type == 'nt':
+                                c_literal = str(int(element_str))
+                            elif var_type == 'dbl':
+                                c_literal = str(float(element_str)) # Let C handle formatting
+                            elif var_type == 'bln':
+                                lowered_elem = element_str.lower()
+                                c_literal = "1" if lowered_elem in ['true', 'tr', '1', 'yes', 'y'] else "0"
+                        except ValueError:
+                            # Error if an element cannot be converted to the expected type
+                            raise TranspilerError(f"Invalid input format for element {i} of {var_type} array '{var_name}' (value: '{element_str}')", line_num)
+
+                        assignments.append(f"{var_name}[{i}] = {c_literal};")
+
+                # --- Handle chr arrays ---
                 elif var_type == 'chr':
-                    # Take the first character, escape special chars if needed
-                    if len(input_value_str) >= 1:
-                        char_val = input_value_str[0]
-                        # Basic escaping for single quote, double quote, and backslash
+                    # Treat input string directly as characters for the array
+                    input_len = len(input_value_str)
+
+                    # CHANGE: Allow shorter input, but cap at array size.
+                    # Determine how many characters to actually copy
+                    chars_to_copy = min(input_len, size - 1) # Leave space for null terminator if size > 0
+
+                    if size == 0: # Handle zero-size array case (though likely semantic error)
+                         chars_to_copy = 0
+                    elif input_len >= size:
+                         # Input is same length or longer than array size
+                         chars_to_copy = size - 1 # Copy all but last char to make space for '\0'
+                         print(f"Warning: Input string length ({input_len}) is >= char array '{var_name}' size ({size}). Input will be truncated.", line_num)
+
+                    # Assign characters from input string
+                    for i in range(chars_to_copy):
+                        char_val = input_value_str[i]
+                        # Basic escaping for C char literal
                         if char_val == "'": char_val = "\\'"
                         elif char_val == '"': char_val = '\\"' # Escape double quotes too
                         elif char_val == "\\": char_val = "\\\\"
-                        # Add more escapes if needed (e.g., \n, \t) - though unlikely from simple input
-                        c_literal = f"'{char_val}'"
-                    else:
-                        c_literal = "'\\0'" # Default to null char if input is empty
-                elif var_type == 'bln':
-                    # Map common truthy/falsy strings to 1/0
-                    lowered_input = input_value_str.lower().strip()
-                    if lowered_input in ['true', 'tr', '1', 'yes', 'y']:
-                        c_literal = "1"
-                    else:
-                        c_literal = "0" # Default to false for unrecognized input
+                        elif char_val == "\n": char_val = "\\n" # Handle newline
+                        elif char_val == "\t": char_val = "\\t" # Handle tab
+                        elif char_val == "\0": char_val = "\\0" # Handle null char explicitly
+                        # Add other escapes if necessary (e.g., \r, \b, \f)
+                        assignments.append(f"{var_name}[{i}] = '{char_val}';")
+
+                    # Add null terminator if the array has space (size > 0)
+                    if size > 0:
+                         # Place null terminator after the copied characters
+                         # Index will be `chars_to_copy` (since indices are 0 to chars_to_copy-1)
+                         assignments.append(f"{var_name}[{chars_to_copy}] = '\\0'; // Null-terminate string")
+
+                # --- Handle strng arrays ---
                 elif var_type == 'strng':
-                    # Escape double quotes and backslashes within the string for C literal
-                    escaped_str = input_value_str.replace('\\', '\\\\').replace('"', '\\"')
-                    # Assigning a string literal to char* is generally okay in C for initialization
-                    # or if the pointer points to read-only memory. If the C code intends
-                    # to modify the string later, this approach might need refinement
-                    # (e.g., allocating memory and using strcpy in C).
-                    # Based on your initial C code using `strdup`, assuming `char*` is used.
-                    c_literal = f'"{escaped_str}"'
+                    # Split input string by spaces (or other delimiter if defined by Conso spec)
+                    parsed_elements = input_value_str.split() # Assumes space delimiter
+                    num_elements = len(parsed_elements)
+
+                    # Check if the number of input strings matches the declared size
+                    if num_elements != size:
+                         raise TranspilerError(f"Number of input elements ({num_elements}) for string array '{var_name}' does not match declared size ({size})", line_num)
+
+                    assignments = []
+                    # Assumes var_name is declared like: char* var_name[size];
+                    for i in range(size):
+                        element_str = parsed_elements[i]
+                        # Escape double quotes and backslashes for C string literal
+                        escaped_str = element_str.replace('\\', '\\\\').replace('"', '\\"')
+                        # Assign the string literal pointer
+                        # WARNING: This points to read-only memory. Use strdup for mutable strings.
+                        assignments.append(f'{var_name}[{i}] = "{escaped_str}";')
+                        # Alternative using strdup (requires #include <string.h> and freeing memory later):
+                        # assignments.append(f'{var_name}[{i}] = strdup("{escaped_str}"); // Remember to free this memory!')
+
                 else:
-                    # Handle other types or raise error if a variable of an unsupported type
-                    # is somehow used with npt (semantic analysis should prevent this).
-                    raise TranspilerError(f"Unsupported type '{var_type}' for 'npt' assignment", line_num)
+                    # Should not happen if semantic analysis is correct
+                    raise TranspilerError(f"Unsupported array type '{var_type}' for 'npt' assignment", line_num)
 
-            except ValueError:
-                 # Handle cases where the input string cannot be converted to the target type
-                 # (e.g., user enters "abc" for an 'nt')
-                 raise TranspilerError(f"Invalid input format for variable '{var_name}' (expected {var_type}, got '{input_value_str}')", line_num)
+                # Join the generated assignment statements, properly indented
+                # Assuming this function returns a string to be placed within a block
+                return "\n    ".join(assignments) # Indent assignments relative to the block
+
+            else:
+                # --- Single Variable Input Handling (Using Assignments) ---
+                c_literal = ""
+                try:
+                    if var_type == 'nt':
+                        # Convert to int, then back to string for C code
+                        c_literal = str(int(input_value_str))
+                    elif var_type == 'dbl':
+                         # Convert to float, format, then back to string
+                         # Use a standard float representation, C compiler handles precision.
+                         c_literal = str(float(input_value_str))
+                    elif var_type == 'chr':
+                        # Take the first character, escape special chars if needed
+                        if len(input_value_str) >= 1:
+                            char_val = input_value_str[0]
+                            # Basic escaping for single quote, double quote, and backslash
+                            if char_val == "'": char_val = "\\'"
+                            elif char_val == '"': char_val = '\\"'
+                            elif char_val == "\\": char_val = "\\\\"
+                            elif char_val == "\n": char_val = "\\n"
+                            elif char_val == "\t": char_val = "\\t"
+                            elif char_val == "\0": char_val = "\\0"
+                            c_literal = f"'{char_val}'"
+                        else:
+                            c_literal = "'\\0'" # Default to null char if input is empty
+                    elif var_type == 'bln':
+                        # Map common truthy/falsy strings to 1/0
+                        lowered_input = input_value_str.lower().strip()
+                        c_literal = "1" if lowered_input in ['true', 'tr', '1', 'yes', 'y'] else "0"
+                    elif var_type == 'strng':
+                        # Escape double quotes and backslashes within the string for C literal
+                        escaped_str = input_value_str.replace('\\', '\\\\').replace('"', '\\"')
+                        # Assigning a string literal to char*
+                        # WARNING: Points to read-only memory. Use strdup for mutable strings.
+                        c_literal = f'"{escaped_str}"'
+                        # Alternative using strdup:
+                        # c_literal = f'strdup("{escaped_str}")' # Requires <string.h> and freeing later
+                    else:
+                        # Handle other types or raise error if a variable of an unsupported type
+                        # is somehow used with npt (semantic analysis should prevent this).
+                        raise TranspilerError(f"Unsupported type '{var_type}' for 'npt' assignment", line_num)
+
+                except ValueError:
+                     # Handle cases where the input string cannot be converted to the target type
+                     # (e.g., user enters "abc" for an 'nt')
+                     raise TranspilerError(f"Invalid input format for variable '{var_name}' (expected {var_type}, got '{input_value_str}')", line_num)
 
 
-            # --- Generate the C assignment statement ---
-            # Check if the variable is an array. Direct assignment might not be appropriate for arrays.
-            # This example assumes non-array assignment based on your initial code.
-            # Handling array input would require more complex logic (e.g., transpiling to strcpy or loops).
-            if is_array:
-                 # For now, raise an error if trying to assign input directly to an array base name
-                 # A future enhancement could potentially use strcpy if var_type is 'strng' and it's a char array.
-                 raise TranspilerError(f"Direct input assignment to array '{var_name}' using 'npt' is not supported in this version.", line_num)
-
-            # Return the C assignment statement
-            return f"{var_name} = {c_literal};"
+                # Return the C assignment statement for single variable
+                return f"{var_name} = {c_literal};"
 
         except TranspilerError as e:
             # Re-raise or handle specific transpiler errors
@@ -915,7 +1039,7 @@ class ConsoTranspilerTokenBased:
                 self._skip_token()
             if self._peek() == ';':
                 self._skip_token() # Consume the semicolon
-            # Return an error comment in the generated code
+            # Return a comment indicating the error, or None if preferred
             return f"// TRANSPILER ERROR (Input): {e.message}"
         except Exception as e:
              # Catch unexpected errors during input processing
@@ -925,7 +1049,7 @@ class ConsoTranspilerTokenBased:
              traceback.print_exc() # Print stack trace for debugging
              # Attempt recovery
              if self.current_pos == start_pos: self._skip_token() # Ensure progress
-             # Return an error comment
+             # Return a comment indicating the error, or None
              return f"// UNEXPECTED TRANSPILER ERROR (Input): {e}"
 
     def _process_return_from_tokens(self):
