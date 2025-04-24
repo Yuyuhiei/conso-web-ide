@@ -337,3 +337,4 @@ def add_all_set():
     add_set(["++", "--"], "<fr_unary>", ["<unary_inc/dec>", "id"])
     add_set(["ntlit", "~ntlit"], "<inc/dec_value>", ["<ntliterals>"])
     add_set(["(", "dbllit", "~dbllit", "ntlit", "~ntlit", "++", "--", "id", "chrlit", "!", "strnglit", "blnlit"], "<rtrn_value>", ["<expression>"])
+    add_set([";"], "<rtrn_value>", ["null"]) 
