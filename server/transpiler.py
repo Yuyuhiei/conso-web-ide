@@ -921,157 +921,210 @@ class ConsoTranspilerTokenBased:
     def _process_input_from_tokens(self):
         """
         Processes an input statement (var = npt("prompt");) by generating
-        C code using printf for the prompt and standard input functions
-        (like scanf or fgets/sscanf) based on the variable type.
-        Relies on self.symbol_table for type lookup.
-        Assumes 'conso_input_buffer' is declared at the start of the current scope.
+        C code. Handles single variables and arrays based on type.
+        MODIFIED to handle strng[] input with strtok_r and strdup.
         """
         start_pos = self.current_pos
-        line_num = '?'; var_name = '<unknown>' # Initialize for error reporting
+        line_num = '?'; var_name = '<unknown>' # For error reporting
 
         try:
-            # Consume 'id', '=', 'npt', '('
+            # 1. Consume Tokens: id = npt ( "prompt" ) ;
+            # ... (same as before) ...
             _, var_name, token_full = self._consume('id')
             line_num = self._get_token_info(token_full)[2]
             self._consume('=')
             self._consume('npt')
             self._consume('(')
-
-            # Consume and store the prompt string literal
             prompt_text = ""
             if self._peek() == 'strnglit':
                 _, prompt_text, _ = self._consume('strnglit')
-            # Escape prompt for C string literal
             c_prompt = prompt_text.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-
-            # Consume ')' and ';'
             self._consume(')')
             self._consume(';')
 
-            # --- Determine variable type from symbol table ---
-            # (Keep existing symbol table lookup logic)
-            var_type = None
-            is_array = False
-            array_size = None # Get size if needed for strncpy
-            if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                symbol = self.symbol_table.lookup(var_name)
-                if symbol:
-                    var_type = getattr(symbol, 'data_type', None)
-                    is_array = getattr(symbol, 'is_array', False)
-                    array_size = getattr(symbol, 'size', None)
-                else:
-                    raise TranspilerError(f"Variable '{var_name}' not found in symbol table for input", line_num)
-            else:
-                raise TranspilerError("Symbol table not available for input processing", line_num)
+
+            # 2. Look Up Symbol & Get Info (using correct attribute 'array_sizes')
+            # ... (same as the previous corrected version) ...
+            symbol = self.symbol_table.lookup(var_name) # Using current scope's table
+
+            if not symbol:
+                 raise TranspilerError(f"Variable '{var_name}' not found in symbol table for input", line_num)
+
+            var_type = getattr(symbol, 'data_type', None)
+            is_array = getattr(symbol, 'is_array', False)
+            array_size_value = 0 # Default
+
             if var_type is None:
-                raise TranspilerError(f"Could not determine type for variable '{var_name}' during input processing", line_num)
+                 raise TranspilerError(f"Could not determine type for variable '{var_name}' during input processing", line_num)
 
-
-            # --- Generate C code for input ---
-            c_input_code = []
-            # 1. Print the prompt and flush stdout
-            c_input_code.append(f'printf("{c_prompt}"); fflush(stdout);')
-
-            # 2. Generate input reading code based on type
-            # --- REMOVED buffer declaration ---
-            # buffer_size = 1024
-            # buffer_decl = f"char conso_input_buffer[{buffer_size}];"
-
-            # --- Use the fixed buffer name 'conso_input_buffer' ---
-            fixed_buffer_name = "conso_input_buffer"
-            buffer_size = 1024 # Still need the size value
-
-            if var_type == 'strng':
-                c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                c_input_code.append(f'    {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0; // Remove trailing newline')
-                if is_array and array_size:
-                    c_input_code.append(f'    strncpy({var_name}, {fixed_buffer_name}, {array_size} - 1);')
-                    c_input_code.append(f'    {var_name}[{array_size} - 1] = \'\\0\';')
+            if is_array:
+                array_sizes_attr = getattr(symbol, 'array_sizes', None)
+                if isinstance(array_sizes_attr, list) and len(array_sizes_attr) > 0:
+                    try:
+                        array_size_value = int(array_sizes_attr[0])
+                    except (ValueError, TypeError):
+                         if isinstance(array_sizes_attr[0], str):
+                              raise TranspilerError(f"Array size for '{var_name}' is defined by variable '{array_sizes_attr[0]}'. Cannot use for input loop.", line_num)
+                         else:
+                              raise TranspilerError(f"Invalid array size format '{array_sizes_attr[0]}' for '{var_name}'", line_num)
                 else:
-                    c_input_code.append(f'    /* WARNING: Assuming {var_name} is char*. Using strdup requires free() later. */')
-                    c_input_code.append(f'    {var_name} = strdup({fixed_buffer_name}); // Allocate and copy')
-                c_input_code.append(f'}} else {{')
-                c_input_code.append(f'    /* Handle fgets error or EOF */')
-                if is_array: c_input_code.append(f'    {var_name}[0] = \'\\0\';')
-                else: c_input_code.append(f'    {var_name} = NULL;')
-                c_input_code.append(f'}}')
+                    raise TranspilerError(f"Could not determine valid size for array '{var_name}' from 'array_sizes': {repr(array_sizes_attr)}", line_num)
 
-            elif var_type == 'nt':
-                c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%d", &{var_name}) != 1) {{')
-                c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid integer input for {var_name}.\\n");')
-                c_input_code.append(f'        {var_name} = {self.default_values.get("nt", "0")};')
-                c_input_code.append(f'    }}')
-                c_input_code.append(f'}} else {{')
-                c_input_code.append(f'    /* Handle fgets error or EOF */')
-                c_input_code.append(f'    {var_name} = {self.default_values.get("nt", "0")};')
-                c_input_code.append(f'}}')
+                if array_size_value <= 0:
+                    raise TranspilerError(f"Array size must be positive for input '{var_name}' (found: {array_size_value})", line_num)
 
-            # (Apply similar changes for dbl, chr, bln, using fixed_buffer_name)
-            elif var_type == 'dbl':
-                c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%lf", &{var_name}) != 1) {{')
-                c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid double input for {var_name}.\\n");')
-                c_input_code.append(f'        {var_name} = {self.default_values.get("dbl", "0.0")};')
-                c_input_code.append(f'    }}')
-                c_input_code.append(f'}} else {{')
-                c_input_code.append(f'    /* Handle fgets error or EOF */')
-                c_input_code.append(f'    {var_name} = {self.default_values.get("dbl", "0.0")};')
-                c_input_code.append(f'}}')
 
-            elif var_type == 'chr':
-                c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                c_input_code.append(f'    if ({fixed_buffer_name}[0] != \'\\n\' && {fixed_buffer_name}[0] != \'\\0\') {{')
-                c_input_code.append(f'        {var_name} = {fixed_buffer_name}[0];')
-                c_input_code.append(f'    }} else {{')
-                c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid character input for {var_name}.\\n");')
-                c_input_code.append(f'        {var_name} = {self.default_values.get("chr", "\'\\\\0\'")};')
-                c_input_code.append(f'    }}')
-                c_input_code.append(f'}} else {{')
-                c_input_code.append(f'    /* Handle fgets error or EOF */')
-                c_input_code.append(f'    {var_name} = {self.default_values.get("chr", "\'\\\\0\'")};')
-                c_input_code.append(f'}}')
+            # 3. Generate C Code
+            c_input_code = []
+            c_input_code.append(f'printf("{c_prompt}"); fflush(stdout);') # Prompt
 
-            elif var_type == 'bln':
-                c_input_code.append(f'int temp_bln_input;') # Keep temp var local
-                c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%d", &temp_bln_input) == 1) {{')
-                c_input_code.append(f'        {var_name} = (temp_bln_input != 0);')
-                c_input_code.append(f'    }} else {{')
-                c_input_code.append(f'        {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
-                c_input_code.append(f'        if (strcmp({fixed_buffer_name}, "tr") == 0) {{ {var_name} = 1; }}')
-                c_input_code.append(f'        else if (strcmp({fixed_buffer_name}, "fls") == 0) {{ {var_name} = 0; }}')
-                c_input_code.append(f'        else {{')
-                c_input_code.append(f'            fprintf(stderr, "\\nError: Invalid boolean input for {var_name} (expected 0, 1, tr, or fls).\\n");')
-                c_input_code.append(f'            {var_name} = {self.default_values.get("bln", "0")};')
-                c_input_code.append(f'        }}')
-                c_input_code.append(f'    }}')
-                c_input_code.append(f'}} else {{')
-                c_input_code.append(f'    /* Handle fgets error or EOF */')
-                c_input_code.append(f'    {var_name} = {self.default_values.get("bln", "0")};')
-                c_input_code.append(f'}}')
+            fixed_buffer_name = "conso_input_buffer"
+            buffer_size = 1024
+
+            if is_array:
+                # --- ARRAY INPUT ---
+                if var_type == 'chr':
+                    # ... (same as before: scanf with width specifier) ...
+                    if array_size_value > 0:
+                         c_input_code.append(f'scanf("%{array_size_value - 1}s", {var_name});')
+                         c_input_code.append('int c; while ((c = getchar()) != \'\\n\' && c != EOF);')
+                    else:
+                         raise TranspilerError(f"Cannot use scanf for zero-size char array '{var_name}'", line_num)
+
+                elif var_type == 'strng':
+                    # --- MODIFICATION START: Implement strng[] input ---
+                    # Generate code to read line, tokenize, and assign with strdup
+                    c_input_code.append(f'int items_read_{var_name} = 0;')
+                    # Initialize array elements to NULL first to prevent freeing invalid pointers
+                    c_input_code.append(f'for (int k_{var_name} = 0; k_{var_name} < {array_size_value}; ++k_{var_name}) {{')
+                    c_input_code.append(f'    free({var_name}[k_{var_name}]); // Free existing string if any')
+                    c_input_code.append(f'    {var_name}[k_{var_name}] = NULL;')
+                    c_input_code.append(f'}}')
+
+                    c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
+                    c_input_code.append(f'    {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0; // Remove newline')
+                    c_input_code.append(f'    char *token_{var_name};')
+                    c_input_code.append(f'    char *saveptr_{var_name}; // For strtok_r')
+                    c_input_code.append(f'    char *str_ptr_{var_name} = {fixed_buffer_name}; // Ptr to current position in buffer')
+                    # Loop to tokenize and assign
+                    c_input_code.append(f'    for (items_read_{var_name} = 0; items_read_{var_name} < {array_size_value}; ++items_read_{var_name}, str_ptr_{var_name} = NULL) {{')
+                    # Use strtok_r: tokenizes based on space and tab delimiters
+                    c_input_code.append(f'        token_{var_name} = strtok_r(str_ptr_{var_name}, " \\t", &saveptr_{var_name});')
+                    c_input_code.append(f'        if (token_{var_name} == NULL) {{')
+                    c_input_code.append(f'            break; // No more tokens found')
+                    c_input_code.append(f'        }}')
+                    # Assign duplicated token to array element
+                    c_input_code.append(f'        // {var_name}[items_read_{var_name}] is already NULL or freed')
+                    c_input_code.append(f'        {var_name}[items_read_{var_name}] = strdup(token_{var_name});')
+                    # Check for allocation failure
+                    c_input_code.append(f'        if ({var_name}[items_read_{var_name}] == NULL) {{')
+                    c_input_code.append(f'            fprintf(stderr, "Memory allocation failed for string input.\\n");')
+                    c_input_code.append(f'            // Optionally: Add code here to free strings allocated so far in this loop')
+                    c_input_code.append(f'            break;')
+                    c_input_code.append(f'        }}')
+                    c_input_code.append(f'    }}') # End for loop
+                    c_input_code.append(f'}} else {{')
+                    c_input_code.append(f'    /* Handle fgets error or EOF for {var_name} */')
+                    c_input_code.append(f'}}')
+                    # --- MODIFICATION END ---
+
+                elif var_type in ['nt', 'dbl', 'bln']:
+                    # ... (same as before: fgets + sscanf loop) ...
+                    c_input_code.append(f'int items_read_{var_name} = 0;')
+                    c_input_code.append(f'char* parse_ptr_{var_name};')
+                    c_input_code.append(f'int offset_{var_name};')
+                    c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
+                    c_input_code.append(f'    {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
+                    c_input_code.append(f'    parse_ptr_{var_name} = {fixed_buffer_name};')
+                    sscanf_fmt = ""; temp_var_decl = ""; assign_logic = f"{var_name}[items_read_{var_name}]"
+                    if var_type == 'nt':   sscanf_fmt = "%d%n"
+                    elif var_type == 'dbl':  sscanf_fmt = "%lf%n"
+                    elif var_type == 'bln':
+                        sscanf_fmt = "%d%n"; temp_var_decl = f"int temp_bln_{var_name};"; assign_logic = f"temp_bln_{var_name}"
+                    if temp_var_decl: c_input_code.append(f'    {temp_var_decl}')
+                    c_input_code.append(f'    for (items_read_{var_name} = 0; items_read_{var_name} < {array_size_value}; ++items_read_{var_name}) {{')
+                    c_input_code.append(f'        if (sscanf(parse_ptr_{var_name}, "{sscanf_fmt}", &{assign_logic}, &offset_{var_name}) == 1) {{')
+                    if var_type == 'bln': c_input_code.append(f'            {var_name}[items_read_{var_name}] = (temp_bln_{var_name} != 0);')
+                    c_input_code.append(f'            parse_ptr_{var_name} += offset_{var_name};')
+                    c_input_code.append(f'        }} else {{ break; }}')
+                    c_input_code.append(f'    }}')
+                    c_input_code.append(f'}} else {{ /* Handle fgets error */ items_read_{var_name} = 0; }}')
+
+                else:
+                    raise TranspilerError(f"Array input ('npt') not supported for type '{var_type}'", line_num)
+            # --- END ARRAY INPUT ---
 
             else:
-                raise TranspilerError(f"Input ('npt') not supported for type '{var_type}'", line_num)
+                # --- SINGLE VARIABLE INPUT ---
+                # ... (same as previous version) ...
+                if var_type == 'strng':
+                    c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
+                    c_input_code.append(f'    {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
+                    c_input_code.append(f'    /* Assuming {var_name} is char*. Using strdup. */')
+                    c_input_code.append(f'    free({var_name});')
+                    c_input_code.append(f'    {var_name} = strdup({fixed_buffer_name});')
+                    c_input_code.append(f'}} else {{ free({var_name}); {var_name} = NULL; }}')
+                elif var_type == 'nt':
+                    c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
+                    c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%d", &{var_name}) != 1) {{')
+                    c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid integer input for {var_name}.\\n");')
+                    c_input_code.append(f'        {var_name} = {self.default_values.get("nt", "0")};')
+                    c_input_code.append(f'    }}')
+                    c_input_code.append(f'}} else {{ {var_name} = {self.default_values.get("nt", "0")}; }}')
+                elif var_type == 'dbl':
+                     c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
+                     c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%lf", &{var_name}) != 1) {{')
+                     c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid double input for {var_name}.\\n");')
+                     c_input_code.append(f'        {var_name} = {self.default_values.get("dbl", "0.0")};')
+                     c_input_code.append(f'    }}')
+                     c_input_code.append(f'}} else {{ {var_name} = {self.default_values.get("dbl", "0.0")}; }}')
+                elif var_type == 'chr':
+                     c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
+                     c_input_code.append(f'    if ({fixed_buffer_name}[0] != \'\\n\' && {fixed_buffer_name}[0] != \'\\0\') {{')
+                     c_input_code.append(f'        {var_name} = {fixed_buffer_name}[0];')
+                     c_input_code.append(f'    }} else {{')
+                     c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid character input for {var_name}.\\n");')
+                     c_input_code.append(f'        {var_name} = {self.default_values.get("chr", "\'\\\\0\'")};')
+                     c_input_code.append(f'    }}')
+                     c_input_code.append(f'}} else {{ {var_name} = {self.default_values.get("chr", "\'\\\\0\'")}; }}')
+                elif var_type == 'bln':
+                     c_input_code.append(f'int temp_bln_input_{var_name};')
+                     c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
+                     c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%d", &temp_bln_input_{var_name}) == 1) {{')
+                     c_input_code.append(f'        {var_name} = (temp_bln_input_{var_name} != 0);')
+                     c_input_code.append(f'    }} else {{')
+                     c_input_code.append(f'        {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
+                     c_input_code.append(f'        if (strcmp({fixed_buffer_name}, "tr") == 0) {{ {var_name} = 1; }}')
+                     c_input_code.append(f'        else if (strcmp({fixed_buffer_name}, "fls") == 0) {{ {var_name} = 0; }}')
+                     c_input_code.append(f'        else {{')
+                     c_input_code.append(f'            fprintf(stderr, "\\nError: Invalid boolean input for {var_name} (expected 0, 1, tr, or fls).\\n");')
+                     c_input_code.append(f'            {var_name} = {self.default_values.get("bln", "0")};')
+                     c_input_code.append(f'        }}')
+                     c_input_code.append(f'    }}')
+                     c_input_code.append(f'}} else {{ {var_name} = {self.default_values.get("bln", "0")}; }}')
+                else:
+                    raise TranspilerError(f"Input ('npt') not supported for single variable type '{var_type}'", line_num)
+            # --- END SINGLE VARIABLE ---
 
             # Join the generated C lines
             return "\n".join(c_input_code)
 
+        # --- Error Handling (Keep existing blocks) ---
         except TranspilerError as e:
-            # (Keep existing error handling)
             print(f"Error processing input statement for '{var_name}' near line {e.line_num if e.line_num else line_num}: {e.message}", file=sys.stderr)
             self.current_pos = start_pos
-            while self._peek() not in [';', '}', '{', None]: self._skip_token()
+            while self._peek() not in [';', '}', '{', None] and self.current_pos < len(self.tokens):
+                self._skip_token()
             if self._peek() == ';': self._skip_token()
             return f"// TRANSPILER ERROR (Input): {e.message}"
         except Exception as e:
-            # (Keep existing error handling)
             err_line = line_num
             print(f"Unexpected error processing input for '{var_name}' near line {err_line}: {e}", file=sys.stderr)
             import traceback
             traceback.print_exc()
             if self.current_pos == start_pos: self._skip_token()
             return f"// UNEXPECTED TRANSPILER ERROR (Input): {e}"
+        
 
     def _process_return_from_tokens(self):
         self._consume('rtrn')
