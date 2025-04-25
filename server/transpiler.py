@@ -1,9 +1,10 @@
 """
-Conso to C Transpiler (V6 - Token-Based Sequential - Global/Default Fix)
+Conso to C Transpiler (V7 - Token-Based Sequential - Input Brace Fix)
 This module converts Conso code to C code using a token stream provided
 by earlier compiler phases (Lexer, Parser, Semantic Analyzer).
 Processes top-level blocks sequentially based on tokens.
-Includes fixes for global declarations, array initializers, and default values.
+Includes fixes for global declarations, array initializers, default values,
+and removes extra braces around input statement code.
 Does NOT expect an EOF token in the input list.
 """
 import sys
@@ -27,19 +28,17 @@ class TranspilerError(Exception):
 class ConsoTranspilerTokenBased:
     # --- MODIFIED __init__ ---
     # Add user_inputs to __init__
-    def __init__(self, token_list, symbol_table=None, user_inputs=None): # Added user_inputs
+    def __init__(self, token_list, symbol_table=None): # Removed user_inputs
         """
         Initializes the transpiler.
 
         Args:
             token_list: List of tokens from the lexer (EOF token should be removed).
             symbol_table: The symbol table (or relevant scope) for type lookups.
-            user_inputs: A dictionary mapping variable names to user-provided input strings.
         """
         self.tokens = token_list
         self.symbol_table = symbol_table
-        # Store user inputs, defaulting to an empty dict if None
-        self.user_inputs = user_inputs if user_inputs is not None else {}
+        # self.user_inputs = user_inputs if user_inputs is not None else {} # REMOVED THIS LINE
         self.current_pos = 0
         self.output_parts = []
         self.current_indent_level = 0
@@ -142,7 +141,7 @@ class ConsoTranspilerTokenBased:
                     if global_inst_c: global_vars_c.append(global_inst_c)
                     processed_something = True
                 else:
-                    line = '?'; 
+                    line = '?';
                     try: token = self.tokens[self.current_pos]; line = self._get_token_info(token)[2]
                     except IndexError: pass
                     print(f"Warning: Ignoring unexpected top-level token '{token_type}' near line {line}")
@@ -186,8 +185,8 @@ class ConsoTranspilerTokenBased:
             if self._peek() == ';': self._consume(';')
             definition_lines.append(f"}} {struct_name};")
             return "\n".join(definition_lines)
-        except TranspilerError as e: print(f"Error processing struct '{struct_name}': {e}"); self.current_pos = start_pos; 
-        try: self._consume('strct') 
+        except TranspilerError as e: print(f"Error processing struct '{struct_name}': {e}"); self.current_pos = start_pos;
+        try: self._consume('strct')
         except: pass; return None
 
     def _process_function_definition_from_tokens(self):
@@ -200,13 +199,13 @@ class ConsoTranspilerTokenBased:
             params_c = self._process_parameters_from_tokens(); self._consume(')')
             self._consume('{'); definition_lines = [f"{c_return_type} {func_name}({params_c}) {{"]
             self.current_indent_level = 1
-            
+
             # Process function body until we find the closing brace
             brace_level = 1  # We're already inside the function
             while brace_level > 0:
-                if self._peek() is None: 
+                if self._peek() is None:
                     raise TranspilerError(f"Unexpected end of stream inside function '{func_name}'")
-                
+
                 # Track brace level to ensure we process the entire function body
                 if self._peek() == '{':
                     self._consume('{')
@@ -221,26 +220,26 @@ class ConsoTranspilerTokenBased:
                 else:
                     # Process other statements
                     statement_c = self._process_statement_from_tokens()
-                
+
                 if statement_c is not None:
                     indent_level = self.current_indent_level
-                    if statement_c == '}': 
+                    if statement_c == '}':
                         indent_level = max(0, indent_level - 1) # Adjust indent before adding '}'
                     definition_lines.append(self._indent(indent_level) + statement_c)
-                    if statement_c.endswith('{'): 
+                    if statement_c.endswith('{'):
                         self.current_indent_level += 1
-                    if statement_c == '}': 
+                    if statement_c == '}':
                         self.current_indent_level = max(0, self.current_indent_level - 1)
-            
+
             # Add closing brace for function
             self.current_indent_level = 0
             definition_lines.append("}")
             return "\n".join(definition_lines)
-        
-        except TranspilerError as e: 
+
+        except TranspilerError as e:
             print(f"Error processing function '{func_name}': {e}")
             self.current_pos = start_pos
-            try: self._consume('fnctn') 
+            try: self._consume('fnctn')
             except: pass
             return None
 
@@ -265,8 +264,8 @@ class ConsoTranspilerTokenBased:
             definition_lines.append(self._indent(1) + "return 0; // Corresponds to Conso 'end;'")
             definition_lines.append("}")
             return "\n".join(definition_lines)
-        except TranspilerError as e: print(f"Error processing main function: {e}"); self.current_pos = start_pos; 
-        try: self._consume('mn') 
+        except TranspilerError as e: print(f"Error processing main function: {e}"); self.current_pos = start_pos;
+        try: self._consume('mn')
         except: pass; return None
 
     def _process_parameters_from_tokens(self):
@@ -356,7 +355,10 @@ class ConsoTranspilerTokenBased:
             # --- Function/Main Scope Statements ---
             # These should only be processed if not is_global
             if token_type == 'prnt': return self._process_print_from_tokens()
-            elif token_type == 'id' and self._peek(1) == '=' and self._peek(2) == 'npt': return self._process_input_from_tokens()
+            # --- MODIFICATION: Check specifically for the input pattern ---
+            elif token_type == 'id' and self._peek(1) == '=' and self._peek(2) == 'npt':
+                 return self._process_input_from_tokens()
+            # --- END MODIFICATION ---
             elif token_type == 'rtrn': return self._process_return_from_tokens()
             elif token_type == 'f': return self._process_if_from_tokens()
             elif token_type == 'lsf': return self._process_else_if_from_tokens()
@@ -499,16 +501,16 @@ class ConsoTranspilerTokenBased:
         # A better approach might return a list of declarations.
         # Let's assume declarations on one line are typically the same base type.
         return "; ".join(processed_decls) + ";"
-    
+
     def _count_array_elements(self, initializer_tokens):
         """Count the number of elements in a 1D array initializer."""
         if not initializer_tokens or initializer_tokens[0][0] != '{':
             return 0
-        
+
         elements = 0
         brace_level = 0
         in_element = False
-        
+
         for token_type, _ in initializer_tokens:
             if token_type == '{':
                 brace_level += 1
@@ -529,7 +531,7 @@ class ConsoTranspilerTokenBased:
                 elif token_type in ['ntlit', 'dbllit', 'blnlit', 'chrlit', 'strnglit', 'id', 'tr', 'fls']:
                     if not in_element:
                         in_element = True
-        
+
         return elements
 
 
@@ -778,22 +780,23 @@ class ConsoTranspilerTokenBased:
         token_type, token_value = self._get_token_info(token)[:2]
         if token_type != 'id':
             return False
-        
+
         if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
             symbol = self.symbol_table.lookup(token_value)
             return symbol and getattr(symbol, 'data_type', None) == 'strng'
-        
+
         return False
 
     def _process_input_from_tokens(self):
         """
         Processes an input statement (var = npt("prompt");) by generating
-        a C assignment using pre-collected user input.
-        Relies on self.user_inputs dictionary and self.symbol_table.
+        C code using printf for the prompt and standard input functions
+        (like scanf or fgets/sscanf) based on the variable type.
+        Relies on self.symbol_table for type lookup.
         """
         start_pos = self.current_pos
         line_num = '?'
-        var_name = '<unknown>' # Initialize var_name for error reporting
+        var_name = '<unknown>' # Initialize for error reporting
 
         try:
             # Consume 'id', '=', 'npt', '('
@@ -803,129 +806,152 @@ class ConsoTranspilerTokenBased:
             self._consume('npt')
             self._consume('(')
 
-            # Consume the prompt string literal if present, but we don't use it here
-            # The prompt was already extracted in the pre-scan phase in server.py
+            # Consume and store the prompt string literal
+            prompt_text = ""
             if self._peek() == 'strnglit':
-                self._consume('strnglit')
+                _, prompt_text, _ = self._consume('strnglit')
+            # Escape prompt for C string literal
+            c_prompt = prompt_text.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
 
             # Consume ')' and ';'
             self._consume(')')
             self._consume(';')
 
-            # --- Get the pre-collected input value ---
-            if var_name not in self.user_inputs:
-                # This case should ideally be prevented by the pre-scan logic
-                # ensuring all required inputs are collected.
-                raise TranspilerError(f"Missing input value for variable '{var_name}' during transpilation", line_num)
-
-            # Get the raw input string provided by the user
-            input_value_str = self.user_inputs[var_name]
-
             # --- Determine variable type from symbol table ---
             var_type = None
             is_array = False # Check if it's an array type if needed
             if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                # Assuming 'lookup' searches the current scope appropriately.
-                # You might need to pass the specific function scope's symbol table
-                # to the transpiler or ensure lookup handles scopes correctly.
                 symbol = self.symbol_table.lookup(var_name)
                 if symbol:
                     var_type = getattr(symbol, 'data_type', None)
-                    is_array = getattr(symbol, 'is_array', False)
+                    is_array = getattr(symbol, 'is_array', False) # Check if it's an array
                 else:
-                     # It's possible the variable is declared globally, try looking up there if applicable
-                     # This depends heavily on your symbol table structure.
-                     # For simplicity, we raise an error if not found in the provided table.
                      raise TranspilerError(f"Variable '{var_name}' not found in symbol table for input", line_num)
             else:
-                 # This should not happen if semantic analysis passed, but check anyway.
                  raise TranspilerError("Symbol table not available for input processing", line_num)
 
             if var_type is None:
-                 # Symbol found, but no type information? Semantic analysis should catch this.
                  raise TranspilerError(f"Could not determine type for variable '{var_name}' during input processing", line_num)
 
-            # --- Format the input string into a C literal based on type ---
-            c_literal = ""
-            try:
-                if var_type == 'nt':
-                    # Convert to int, then back to string for C code
-                    c_literal = str(int(input_value_str))
-                elif var_type == 'dbl':
-                     # Convert to float, format, then back to string
-                     # Use a standard float representation, C compiler handles precision.
-                     c_literal = str(float(input_value_str))
-                elif var_type == 'chr':
-                    # Take the first character, escape special chars if needed
-                    if len(input_value_str) >= 1:
-                        char_val = input_value_str[0]
-                        # Basic escaping for single quote, double quote, and backslash
-                        if char_val == "'": char_val = "\\'"
-                        elif char_val == '"': char_val = '\\"' # Escape double quotes too
-                        elif char_val == "\\": char_val = "\\\\"
-                        # Add more escapes if needed (e.g., \n, \t) - though unlikely from simple input
-                        c_literal = f"'{char_val}'"
-                    else:
-                        c_literal = "'\\0'" # Default to null char if input is empty
-                elif var_type == 'bln':
-                    # Map common truthy/falsy strings to 1/0
-                    lowered_input = input_value_str.lower().strip()
-                    if lowered_input in ['true', 'tr', '1', 'yes', 'y']:
-                        c_literal = "1"
-                    else:
-                        c_literal = "0" # Default to false for unrecognized input
-                elif var_type == 'strng':
-                    # Escape double quotes and backslashes within the string for C literal
-                    escaped_str = input_value_str.replace('\\', '\\\\').replace('"', '\\"')
-                    # Assigning a string literal to char* is generally okay in C for initialization
-                    # or if the pointer points to read-only memory. If the C code intends
-                    # to modify the string later, this approach might need refinement
-                    # (e.g., allocating memory and using strcpy in C).
-                    # Based on your initial C code using `strdup`, assuming `char*` is used.
-                    c_literal = f'"{escaped_str}"'
-                else:
-                    # Handle other types or raise error if a variable of an unsupported type
-                    # is somehow used with npt (semantic analysis should prevent this).
-                    raise TranspilerError(f"Unsupported type '{var_type}' for 'npt' assignment", line_num)
+            # --- Generate C code for input ---
+            c_input_code = []
+            # 1. Print the prompt and flush stdout
+            c_input_code.append(f'printf("{c_prompt}"); fflush(stdout);')
 
-            except ValueError:
-                 # Handle cases where the input string cannot be converted to the target type
-                 # (e.g., user enters "abc" for an 'nt')
-                 raise TranspilerError(f"Invalid input format for variable '{var_name}' (expected {var_type}, got '{input_value_str}')", line_num)
+            # 2. Generate input reading code based on type
+            # Define a buffer size (adjust if needed)
+            buffer_size = 1024
+            buffer_decl = f"char input_buffer[{buffer_size}];" # Declare buffer once if needed multiple times?
+
+            if var_type == 'strng':
+                # Safest: Use fgets for strings
+                # Note: Assumes var_name is char*. Requires memory allocation if not literal.
+                # If var_name is char array[SIZE], use strncpy.
+                # For simplicity assuming char* and using strdup (requires #include <string.h>)
+                # Ensure buffer_decl is added if not already present in the scope
+                c_input_code.append(buffer_decl) # Declare buffer locally for this input
+                c_input_code.append(f'if (fgets(input_buffer, {buffer_size}, stdin) != NULL) {{')
+                c_input_code.append(f'    input_buffer[strcspn(input_buffer, "\\n")] = 0; // Remove trailing newline')
+                # If var_name is char*, strdup allocates memory. free() is needed later.
+                # If var_name is char array[N], use: strncpy(var_name, input_buffer, N-1); var_name[N-1] = '\\0';
+                c_input_code.append(f'    {var_name} = strdup(input_buffer); // Allocate and copy')
+                c_input_code.append(f'}} else {{')
+                c_input_code.append(f'    // Handle fgets error or EOF')
+                c_input_code.append(f'    {var_name} = NULL; // Or assign default / handle error')
+                c_input_code.append(f'}}')
+
+            elif var_type == 'nt':
+                # Option 1: Simple scanf (less safe)
+                # c_input_code.append(f'scanf("%d", &{var_name});')
+                # c_input_code.append(f'while (getchar() != \'\\n\'); // Consume trailing newline')
+                # Option 2: Safer fgets + sscanf
+                c_input_code.append(buffer_decl)
+                c_input_code.append(f'if (fgets(input_buffer, {buffer_size}, stdin) != NULL) {{')
+                c_input_code.append(f'    if (sscanf(input_buffer, "%d", &{var_name}) != 1) {{')
+                c_input_code.append(f'        // Handle parsing error, e.g., set default or print error')
+                c_input_code.append(f'        {var_name} = 0; // Default value on parse error')
+                c_input_code.append(f'        fprintf(stderr, "Invalid integer input.\\n");')
+                c_input_code.append(f'    }}')
+                c_input_code.append(f'}} else {{')
+                c_input_code.append(f'    // Handle fgets error or EOF')
+                c_input_code.append(f'    {var_name} = 0;')
+                c_input_code.append(f'}}')
+
+            elif var_type == 'dbl':
+                # Option 1: Simple scanf
+                # c_input_code.append(f'scanf("%lf", &{var_name});')
+                # c_input_code.append(f'while (getchar() != \'\\n\');')
+                # Option 2: Safer fgets + sscanf
+                c_input_code.append(buffer_decl)
+                c_input_code.append(f'if (fgets(input_buffer, {buffer_size}, stdin) != NULL) {{')
+                c_input_code.append(f'    if (sscanf(input_buffer, "%lf", &{var_name}) != 1) {{')
+                c_input_code.append(f'        {var_name} = 0.0; // Default value on parse error')
+                c_input_code.append(f'        fprintf(stderr, "Invalid double input.\\n");')
+                c_input_code.append(f'    }}')
+                c_input_code.append(f'}} else {{')
+                c_input_code.append(f'    {var_name} = 0.0;')
+                c_input_code.append(f'}}')
+
+            elif var_type == 'chr':
+                # Option 1: scanf with space to skip leading whitespace (reads only one char)
+                # c_input_code.append(f'scanf(" %c", &{var_name});') # Note the space before %c
+                # c_input_code.append(f'while (getchar() != \'\\n\');')
+                 # Option 2: Safer fgets (reads whole line, takes first char)
+                c_input_code.append(buffer_decl)
+                c_input_code.append(f'if (fgets(input_buffer, {buffer_size}, stdin) != NULL) {{')
+                c_input_code.append(f'    if (input_buffer[0] != \'\\n\' && input_buffer[0] != \'\\0\') {{ // Check if input is not empty')
+                c_input_code.append(f'        {var_name} = input_buffer[0];')
+                c_input_code.append(f'    }} else {{')
+                c_input_code.append(f'        {var_name} = \'\\0\'; // Default for empty input')
+                c_input_code.append(f'        fprintf(stderr, "Invalid character input.\\n");')
+                c_input_code.append(f'    }}')
+                c_input_code.append(f'}} else {{')
+                c_input_code.append(f'    {var_name} = \'\\0\';')
+                c_input_code.append(f'}}')
 
 
-            # --- Generate the C assignment statement ---
-            # Check if the variable is an array. Direct assignment might not be appropriate for arrays.
-            # This example assumes non-array assignment based on your initial code.
-            # Handling array input would require more complex logic (e.g., transpiling to strcpy or loops).
-            if is_array:
-                 # For now, raise an error if trying to assign input directly to an array base name
-                 # A future enhancement could potentially use strcpy if var_type is 'strng' and it's a char array.
-                 raise TranspilerError(f"Direct input assignment to array '{var_name}' using 'npt' is not supported in this version.", line_num)
+            elif var_type == 'bln':
+                # Read as integer (0 or 1), or could read string "tr"/"fls" and convert
+                # Reading as int is simpler for C side
+                c_input_code.append(buffer_decl)
+                c_input_code.append(f'int temp_bln_input;') # Temporary int for scanf
+                c_input_code.append(f'if (fgets(input_buffer, {buffer_size}, stdin) != NULL) {{')
+                c_input_code.append(f'    if (sscanf(input_buffer, "%d", &temp_bln_input) == 1) {{')
+                c_input_code.append(f'        {var_name} = (temp_bln_input != 0); // Assign 1 if non-zero, 0 otherwise')
+                c_input_code.append(f'    }} else {{')
+                 # Alternative: Check for "tr" / "fls" strings
+                 # c_input_code.append(f'    input_buffer[strcspn(input_buffer, "\\n")] = 0;')
+                 # c_input_code.append(f'    if (strcmp(input_buffer, "tr") == 0) {{ {var_name} = 1; }}')
+                 # c_input_code.append(f'    else if (strcmp(input_buffer, "fls") == 0) {{ {var_name} = 0; }}')
+                 # c_input_code.append(f'    else {{')
+                c_input_code.append(f'        {var_name} = 0; // Default value on parse error')
+                c_input_code.append(f'        fprintf(stderr, "Invalid boolean input (expected 0 or 1).\\n");')
+                 # c_input_code.append(f'    }}') # Closing brace for strcmp alternative
+                c_input_code.append(f'    }}')
+                c_input_code.append(f'}} else {{')
+                c_input_code.append(f'    {var_name} = 0;')
+                c_input_code.append(f'}}')
 
-            # Return the C assignment statement
-            return f"{var_name} = {c_literal};"
+            else:
+                raise TranspilerError(f"Input ('npt') not supported for type '{var_type}'", line_num)
+
+            # --- FIX: Join the generated C lines without extra braces ---
+            # Join with newlines to create a sequence of statements
+            return "\n".join(c_input_code)
+            # --- END FIX ---
 
         except TranspilerError as e:
-            # Re-raise or handle specific transpiler errors
             print(f"Error processing input statement for '{var_name}' near line {e.line_num if e.line_num else line_num}: {e.message}")
-            # Attempt to recover by skipping to the next statement delimiter
-            self.current_pos = start_pos # Reset position
-            while self._peek() not in [';', '}', '{', None]: # Skip until potential statement end/start
-                self._skip_token()
-            if self._peek() == ';':
-                self._skip_token() # Consume the semicolon
-            # Return an error comment in the generated code
+            self.current_pos = start_pos
+            while self._peek() not in [';', '}', '{', None]: self._skip_token()
+            if self._peek() == ';': self._skip_token()
             return f"// TRANSPILER ERROR (Input): {e.message}"
         except Exception as e:
-             # Catch unexpected errors during input processing
-             err_line = line_num # Use line_num obtained earlier
+             err_line = line_num
              print(f"Unexpected error processing input for '{var_name}' near line {err_line}: {e}")
              import traceback
-             traceback.print_exc() # Print stack trace for debugging
-             # Attempt recovery
-             if self.current_pos == start_pos: self._skip_token() # Ensure progress
-             # Return an error comment
+             traceback.print_exc()
+             if self.current_pos == start_pos: self._skip_token()
              return f"// UNEXPECTED TRANSPILER ERROR (Input): {e}"
 
     def _process_return_from_tokens(self):
@@ -950,7 +976,7 @@ class ConsoTranspilerTokenBased:
         self._consume('lsf'); self._consume('('); condition_tokens = []; paren_level = 1
         while paren_level > 0:
              tt, tv, _ = self._consume();
-             if tt == '(': paren_level += 1; 
+             if tt == '(': paren_level += 1;
              elif tt == ')': paren_level -= 1
              if paren_level > 0: condition_tokens.append((tt, tv))
         condition_c = self._tokens_to_c_expression(condition_tokens)
@@ -961,7 +987,7 @@ class ConsoTranspilerTokenBased:
         self._consume('whl'); self._consume('('); condition_tokens = []; paren_level = 1
         while paren_level > 0:
              tt, tv, _ = self._consume();
-             if tt == '(': paren_level += 1; 
+             if tt == '(': paren_level += 1;
              elif tt == ')': paren_level -= 1
              if paren_level > 0: condition_tokens.append((tt, tv))
         condition_c = self._tokens_to_c_expression(condition_tokens)
@@ -971,7 +997,7 @@ class ConsoTranspilerTokenBased:
         self._consume('fr'); self._consume('('); it = []; ct = []; ut = []; p = 1; pl = 1
         while pl > 0:
              tt, tv, _ = self._consume();
-             if tt == '(': pl += 1; 
+             if tt == '(': pl += 1;
              elif tt == ')': pl -= 1
              if pl == 0: break
              if tt == ';' and pl == 1: p += 1
@@ -984,7 +1010,7 @@ class ConsoTranspilerTokenBased:
         self._consume('swtch'); self._consume('('); expr_tokens = []; paren_level = 1
         while paren_level > 0:
              tt, tv, _ = self._consume();
-             if tt == '(': paren_level += 1; 
+             if tt == '(': paren_level += 1;
              elif tt == ')': paren_level -= 1
              if paren_level > 0: expr_tokens.append((tt, tv))
         expr_c = self._tokens_to_c_expression(expr_tokens)
@@ -1260,10 +1286,10 @@ class ConsoTranspilerTokenBased:
         while not (self._peek() == ')' and paren_level == 0):
             if self._peek() is None:
                 line = '?'
-                if current_arg_tokens: 
+                if current_arg_tokens:
                     try: line = self._get_token_info(current_arg_tokens[-1])[2]
                     except: pass
-                elif self.current_pos > 0: 
+                elif self.current_pos > 0:
                     try: line = self._get_token_info(self.tokens[self.current_pos-1])[2]
                     except: pass
                 raise TranspilerError("Unexpected end of stream in print statement", line)
@@ -1288,7 +1314,7 @@ class ConsoTranspilerTokenBased:
         for arg_tokens in arg_groups_tokens:
             if not arg_tokens: continue
 
-            print(f"\n[DEBUG _process_print] Processing arg tokens: {arg_tokens}") # DEBUG
+            # print(f"\n[DEBUG _process_print] Processing arg tokens: {arg_tokens}") # DEBUG
 
             token_pairs = [(self._get_token_info(t)[0], self._get_token_info(t)[1]) for t in arg_tokens]
             arg_c_expr = self._tokens_to_c_expression(token_pairs)
@@ -1297,7 +1323,7 @@ class ConsoTranspilerTokenBased:
 
             # --- Universal Type Checking using get_expression_type ---
             expression_result_type = self.get_expression_type(token_pairs)
-            print(f"[DEBUG _process_print] Determined type: {expression_result_type}") # DEBUG
+            # print(f"[DEBUG _process_print] Determined type: {expression_result_type}") # DEBUG
 
             if expression_result_type == 'dbl':
                 fmt = "%.2f"
@@ -1316,7 +1342,7 @@ class ConsoTranspilerTokenBased:
                 print(f"Warning: Could not determine print format for expression near line {line_num}. Defaulting to %d.")
                 fmt = "%d"
 
-            print(f"[DEBUG _process_print] Final format specifier: {fmt}") # DEBUG
+            # print(f"[DEBUG _process_print] Final format specifier: {fmt}") # DEBUG
             format_parts.append(fmt)
             c_args.append(arg_c_expr)
 
@@ -1345,11 +1371,11 @@ char* conso_concat(const char* s1, const char* s2) { if (s1 == NULL) s1 = ""; if
             if char == "'" and not idq: isq = not isq
             elif char == '"' and not isq: idq = not idq
             if isq or idq: current_arg += char; continue
-            if char == '(': pl += 1; 
+            if char == '(': pl += 1;
             elif char == ')': pl -= 1
-            elif char == '[': bl += 1; 
+            elif char == '[': bl += 1;
             elif char == ']': bl -= 1
-            elif char == '{': brl += 1; 
+            elif char == '{': brl += 1;
             elif char == '}': brl -= 1
             if char == ',' and pl == 0 and bl == 0 and brl == 0: args.append(current_arg); current_arg = ""
             else: current_arg += char
@@ -1364,44 +1390,39 @@ def transpile(conso_code):
     print("Warning: Calling string-based transpile. Token-based is preferred.")
     return "// String-based transpile function needs lexer/parser integration."
 
-def transpile_from_tokens(token_list, symbol_table=None, user_inputs=None): # Added user_inputs
+def transpile_from_tokens(token_list, symbol_table=None): # Removed user_inputs
     """
-    Transpiles Conso code from a token list using the token-based transpiler,
-    injecting provided user inputs for 'npt' statements.
+    Transpiles Conso code from a token list using the token-based transpiler.
+    Generates standard C input/output calls.
 
     Args:
         token_list: List of tokens (type, value, line, col). EOF should be excluded.
         symbol_table: The symbol table (e.g., global scope or relevant function scope).
-        user_inputs: Dictionary mapping variable names to user-provided input strings.
 
     Returns:
         The generated C code as a string, or an error comment string.
     """
     # Remove EOF token before passing to transpiler if present
-    # Ensure token_list is not empty before checking the last element
     if token_list:
          last_token = token_list[-1]
-         # Use a temporary instance just to access the helper method safely
-         temp_transpiler = ConsoTranspilerTokenBased([])
+         temp_transpiler = ConsoTranspilerTokenBased([]) # Temporary instance for helper
          token_type, _, _ = temp_transpiler._get_token_info(last_token)
          if token_type == 'EOF':
-              print("Info: Removing EOF token before transpilation.")
+              # print("Info: Removing EOF token before transpilation.") # Optional log
               token_list = token_list[:-1]
 
-    # Pass user_inputs to the constructor
-    transpiler = ConsoTranspilerTokenBased(token_list, symbol_table, user_inputs)
+    # Instantiate transpiler WITHOUT user_inputs
+    transpiler = ConsoTranspilerTokenBased(token_list, symbol_table)
     try:
         # Perform the transpilation
         return transpiler.transpile()
     except TranspilerError as e:
-        # Handle known transpilation errors
         print(f"Transpilation Error: {e}", file=sys.stderr)
         return f"// TRANSPILER ERROR: {e}"
     except Exception as e:
-        # Handle unexpected errors during transpilation
         print(f"Unexpected Transpiler Error: {type(e).__name__}: {e}", file=sys.stderr)
         import traceback
-        print(traceback.format_exc(), file=sys.stderr) # Print full traceback
+        print(traceback.format_exc(), file=sys.stderr)
         return f"// UNEXPECTED TRANSPILER ERROR: {type(e).__name__}: {e}"
 
 # --- Example Usage ---
@@ -1442,10 +1463,13 @@ if __name__ == "__main__":
 
         # mn(){ ... }
         ('mn', 'mn', 14, 1), ('(', '(', 14, 3), (')', ')', 14, 4), ('{', '{', 14, 5),
-        ('end', 'end', 15, 7), (';', ';', 15, 10),
-        # ('}', '}', 16, 1) # No closing brace for mn if using end;
+        # Example input statement inside main
+        ('nt', 'nt', 15, 5), ('id', 'userInput', 15, 8), (';', ';', 15, 17), # Declare var
+        ('id', 'userInput', 16, 5), ('=', '=', 16, 15), ('npt', 'npt', 16, 17), ('(', '(', 16, 20), ('strnglit', 'Enter value: ', 16, 21), (')', ')', 16, 36), (';', ';', 16, 37), # Input statement
+        ('end', 'end', 17, 7), (';', ';', 17, 10),
+        # ('}', '}', 18, 1) # No closing brace for mn if using end;
     ]
-      
+
 
     print("--- Transpiling User's Conso Code from Tokens ---")
     # Pass None for symbol_table for now
