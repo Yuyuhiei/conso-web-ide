@@ -1,9 +1,9 @@
 from lexer import Lexer
 
-class SemanticError(Exception):
+class SemanticError(Exception): 
     def __init__(self, message, line=None, column=None):
         super().__init__(message)
-        self.message = message
+        self.message = message 
         self.line = line
         self.column = column
 
@@ -686,53 +686,94 @@ class SemanticAnalyzer:
     def analyze_return_statement(self, function_return_type, line, column):
         """Analyze a return statement and ensure it matches the function's return type"""
         self.advance()  # Move past 'rtrn'
-        
-        # Check if we're in the main function
-        current_function = None
-        temp_scope = self.current_scope
-        while temp_scope:
-            if temp_scope.scope_name.startswith("function "):
-                current_function = temp_scope.scope_name[len("function "):]
-                break
-            temp_scope = temp_scope.parent
-        
-        # No return statements allowed in main function
-        if current_function == "mn":
-            raise SemanticError("Return statements are not allowed in the main function", line, column)
-    
+
+        # --- REMOVED CHECK FOR MAIN FUNCTION ---
+        # # Check if we're in the main function
+        # current_function = None
+        # temp_scope = self.current_scope
+        # while temp_scope:
+        #     if temp_scope.scope_name.startswith("function "):
+        #         current_function = temp_scope.scope_name[len("function "):]
+        #         break
+        #     temp_scope = temp_scope.parent
+        #
+        # # No return statements allowed in main function
+        # if current_function == "mn":
+        #     raise SemanticError("Return statements are not allowed in the main function", line, column)
+        # --- END REMOVED CHECK ---
+
         # Get the next token to determine if there's a return expression
         token_type, token_value, token_line, token_column = self.get_current_token()
-        
+
         # For void functions, return should not have a value
         if function_return_type == 'vd':
-            if token_type != ';':
+            # --- ADDED: Check if we are in 'mn' function, which now allows return 0 ---
+            is_main_function = False
+            temp_scope = self.current_scope
+            while temp_scope:
+                if temp_scope.scope_name == "function mn":
+                    is_main_function = True
+                    break
+                temp_scope = temp_scope.parent
+
+            if is_main_function:
+                # Allow 'rtrn 0;' in main
+                if token_type == 'ntlit' and token_value == '0':
+                    self.advance() # Past 0
+                    if self.get_current_token()[0] == ';':
+                         self.advance() # Past ;
+                         return # Valid return 0; in main
+                    else:
+                         raise SemanticError("Expected ';' after 'rtrn 0' in main function", self.get_current_token()[2], self.get_current_token()[3])
+                elif token_type == ';':
+                     # Allow 'rtrn;' in main (implicitly returns 0 later)
+                     self.advance() # Past ;
+                     return
+                else:
+                     raise SemanticError(f"Main function ('mn') can only return '0' or have no return value ('rtrn;'), got '{token_value}'", token_line, token_column)
+            # --- END ADDED CHECK for 'mn' ---
+            elif token_type != ';': # Original check for other void functions
                 raise SemanticError(f"Void function cannot return a value", token_line, token_column)
-            self.advance()  # Move past semicolon
+            self.advance()  # Move past semicolon for non-main void functions
             return
-        
-        # For non-void functions, there must be a return value
+
+        # For non-void functions (and potentially main now), there must be a return value
         if token_type == ';':
             raise SemanticError(f"Function with return type '{function_return_type}' must return a value", token_line, token_column)
-        
+
         # Find the end of the return expression (semicolon)
         start_pos = self.current_token_index
-        
+
         while self.current_token_index < len(self.token_stream) and self.token_stream[self.current_token_index][0] != ';':
             self.advance()
-        
+
         if self.current_token_index >= len(self.token_stream):
             raise SemanticError("Unexpected end of file inside return statement", line, column)
-        
+
         end_pos = self.current_token_index
         self.current_token_index = start_pos
-        
+
         # Analyze the expression
         expr_type = self.analyze_expression(end_pos)
-        
-        # Check if return type matches function return type
-        if expr_type != function_return_type:
+
+        # --- MODIFIED CHECK for 'mn' ---
+        is_main_function = False
+        temp_scope = self.current_scope
+        while temp_scope:
+            if temp_scope.scope_name == "function mn":
+                is_main_function = True
+                break
+            temp_scope = temp_scope.parent
+
+        if is_main_function:
+             # In 'mn', only allow returning an integer literal 0
+             if not (expr_type == 'nt' and self.token_stream[start_pos][0] == 'ntlit' and self.token_stream[start_pos][1] == '0' and start_pos + 1 == end_pos):
+                  raise SemanticError(f"Main function ('mn') can only return the integer literal '0', got expression of type '{expr_type}'", token_line, token_column)
+        # --- END MODIFIED CHECK ---
+        # Check if return type matches function return type (for non-main functions)
+        elif expr_type != function_return_type:
             raise SemanticError(f"Return type mismatch: expected '{function_return_type}', got '{expr_type}'", token_line, token_column)
-        
+
         # Move past the semicolon
         if self.get_current_token()[0] == ';':
             self.advance()
@@ -3244,70 +3285,72 @@ class SemanticAnalyzer:
         token_type, token_value, line, column = self.get_current_token()
         if token_type != 'f':
             raise SemanticError(f"Expected 'f' keyword, got '{token_type}'", line, column)
-        
+
         self.advance()  # Move past 'f'
-        
+
         # Process opening parenthesis for condition
         token_type, token_value, line, column = self.get_current_token()
         if token_type != '(':
             raise SemanticError(f"Expected '(' after 'f', got '{token_type}'", line, column)
-        
+
         # Keep track of the outermost parentheses level
         outer_paren_start = self.current_token_index
         self.advance()  # Move past opening parenthesis
-        
+
         # Need to find the matching closing parenthesis for the outermost level
         paren_level = 1
-        
+
         while paren_level > 0 and self.current_token_index < len(self.token_stream):
             current_token = self.get_current_token()[0]
             if current_token == '(':
                 paren_level += 1
             elif current_token == ')':
                 paren_level -= 1
-            
+
             if paren_level > 0:
                 self.advance()
-        
+
         # Now we should be at the closing parenthesis of the condition
         if paren_level > 0:
             raise SemanticError("Unclosed parenthesis in 'f' statement condition", line, column)
-        
+
         # Now at the closing parenthesis
         outer_paren_end = self.current_token_index
-        
+
         # Reset to just after the opening parenthesis
         self.current_token_index = outer_paren_start + 1
-        
+
         # Analyze the condition using your expression analyzer
         # The condition is everything between the parentheses
         expr_type = self.analyze_expression(outer_paren_end)
-        
-        if expr_type != 'bln':
-            raise SemanticError(f"Condition in 'f' statement must be of type 'bln', got '{expr_type}'", line, column)
-        
+
+        # --- MODIFIED CHECK: Allow 'nt' or 'bln' ---
+        if expr_type not in ['bln', 'nt']:
+            raise SemanticError(f"Condition in 'f' statement must be of type 'bln' or 'nt', got '{expr_type}'", line, column)
+        # --- END MODIFIED CHECK ---
+
         # Move to the closing parenthesis and advance past it
         self.current_token_index = outer_paren_end
         self.advance()  # Move past the closing parenthesis
-        
+
         # Process opening brace for if-body
         token_type, token_value, line, column = self.get_current_token()
         if token_type != '{':
             raise SemanticError(f"Expected '{{' to start 'f' body, got '{token_type}'", line, column)
-        
+
         self.advance()  # Move past '{'
-        
+
         # Create a new scope for the if-body
         if_scope = SymbolTable(parent=self.current_scope, scope_name="if block")
         original_scope = self.current_scope  # Store the original scope
         self.current_scope = if_scope
-        
+
         # Process if-body statements
         self.analyze_block_statements()
-        
+
         # Restore original scope
         self.current_scope = original_scope
-        
+
         # Check for elseif (lsf) or else (ls) statements
         if self.current_token_index < len(self.token_stream):
             token_type, token_value, line, column = self.get_current_token()
@@ -3321,69 +3364,71 @@ class SemanticAnalyzer:
         token_type, token_value, line, column = self.get_current_token()
         if token_type != 'lsf':
             raise SemanticError(f"Expected 'lsf' keyword, got '{token_type}'", line, column)
-        
+
         self.advance()  # Move past 'lsf'
-        
+
         # Process opening parenthesis for condition
         token_type, token_value, line, column = self.get_current_token()
         if token_type != '(':
             raise SemanticError(f"Expected '(' after 'lsf', got '{token_type}'", line, column)
-        
+
         # Keep track of the outermost parentheses level
         outer_paren_start = self.current_token_index
         self.advance()  # Move past opening parenthesis
-        
+
         # Need to find the matching closing parenthesis for the outermost level
         paren_level = 1
-        
+
         while paren_level > 0 and self.current_token_index < len(self.token_stream):
             current_token = self.get_current_token()[0]
             if current_token == '(':
                 paren_level += 1
             elif current_token == ')':
                 paren_level -= 1
-            
+
             if paren_level > 0:
                 self.advance()
-        
+
         # Now we should be at the closing parenthesis of the condition
         if paren_level > 0:
             raise SemanticError("Unclosed parenthesis in 'lsf' statement condition", line, column)
-        
+
         # Now at the closing parenthesis
         outer_paren_end = self.current_token_index
-        
+
         # Reset to just after the opening parenthesis
         self.current_token_index = outer_paren_start + 1
-        
+
         # Analyze the condition using your expression analyzer
         # The condition is everything between the parentheses
         expr_type = self.analyze_expression(outer_paren_end)
-        
-        if expr_type != 'bln':
-            raise SemanticError(f"Condition in 'lsf' statement must be of type 'bln', got '{expr_type}'", line, column)
-        
+
+        # --- MODIFIED CHECK: Allow 'nt' or 'bln' ---
+        if expr_type not in ['bln', 'nt']:
+            raise SemanticError(f"Condition in 'lsf' statement must be of type 'bln' or 'nt', got '{expr_type}'", line, column)
+        # --- END MODIFIED CHECK ---
+
         # Move to the closing parenthesis and advance past it
         self.current_token_index = outer_paren_end
         self.advance()  # Move past the closing parenthesis
-        
+
         # Process opening brace for elseif-body
         token_type, token_value, line, column = self.get_current_token()
         if token_type != '{':
             raise SemanticError(f"Expected '{{' to start 'lsf' body, got '{token_type}'", line, column)
-        
+
         self.advance()  # Move past '{'
-        
+
         # Create a new scope for the elseif-body, using the passed parent scope
         elseif_scope = SymbolTable(parent=parent_scope, scope_name="elseif block")
         self.current_scope = elseif_scope
-        
+
         # Process elseif-body statements
         self.analyze_block_statements()
-        
+
         # Restore original scope
         self.current_scope = parent_scope
-        
+
         # Check for another elseif (lsf) or else (ls) statement
         if self.current_token_index < len(self.token_stream):
             token_type, token_value, line, column = self.get_current_token()
@@ -3932,58 +3977,88 @@ class SemanticAnalyzer:
         token_type, token_value, line, column = self.get_current_token()
         if token_type != 'rtrn':
             raise SemanticError(f"Expected 'rtrn' keyword, got '{token_type}'", line, column)
-        
+
         self.advance()  # Move past 'rtrn'
-        
+
         # Check if we're in the main function
-        current_function = None
+        is_main_function = False
+        current_function_name = None
         temp_scope = self.current_scope
         while temp_scope:
             if temp_scope.scope_name.startswith("function "):
-                current_function = temp_scope.scope_name[len("function "):]
+                current_function_name = temp_scope.scope_name[len("function "):]
+                if current_function_name == "mn":
+                    is_main_function = True
                 break
             temp_scope = temp_scope.parent
-        
-        # No return statements allowed in main function
-        if current_function == "mn":
-            raise SemanticError("Return statements are not allowed in the main function", line, column)
-        
-        # For other functions, we need to check against the function's return type
-        # For this, we need to know the function's return type
-        # We can get this from the function symbol in the global scope
-        if current_function:
-            func_symbol = self.global_scope.lookup(current_function)
+
+        # --- REMOVED CHECK THAT DISALLOWED RETURN IN MAIN ---
+        # # No return statements allowed in main function
+        # if current_function == "mn":
+        #     raise SemanticError("Return statements are not allowed in the main function", line, column)
+        # --- END REMOVED CHECK ---
+
+        # For other functions (or main), we need to check against the function's return type
+        if current_function_name: # Should always be true if we are in a function scope
+            func_symbol = self.global_scope.lookup(current_function_name)
             if func_symbol and func_symbol.type == 'function':
                 return_type = func_symbol.data_type
-                
-                # For void functions, there should be no return value
-                if return_type == 'vd':
+
+                # For void functions (excluding main), there should be no return value
+                if return_type == 'vd' and not is_main_function:
                     token_type, token_value, line, column = self.get_current_token()
                     if token_type != ';':
                         raise SemanticError(f"Void function cannot return a value", line, column)
                     self.advance()  # Move past ';'
+                # For main or non-void functions
                 else:
-                    # For non-void functions, analyze the return expression
-                    start_pos = self.current_token_index
-                    
-                    # Find the end of the return expression (semicolon)
-                    while self.current_token_index < len(self.token_stream) and self.token_stream[self.current_token_index][0] != ';':
-                        self.advance()
-                    
-                    end_pos = self.current_token_index
-                    self.current_token_index = start_pos
-                    
-                    # Analyze the expression
-                    expr_type = self.analyze_expression(end_pos)
-                    
-                    # Check if return type matches function return type
-                    if expr_type != return_type:
-                        raise SemanticError(f"Return type mismatch: expected '{return_type}', got '{expr_type}'", line, column)
-                    
-                    # Move past the semicolon
-                    self.advance()  # Move to semicolon
-                    if self.get_current_token()[0] == ';':
-                        self.advance()  # Move past semicolon
+                    # --- ADDED: Handle return in main ---
+                    if is_main_function:
+                        # Allow 'rtrn 0;' or 'rtrn;'
+                        next_token_type, next_token_value, next_line, next_col = self.get_current_token()
+                        if next_token_type == 'ntlit' and next_token_value == '0':
+                             self.advance() # Past 0
+                             if self.get_current_token()[0] == ';':
+                                 self.advance() # Past ;
+                                 return # Valid rtrn 0;
+                             else:
+                                 raise SemanticError("Expected ';' after 'rtrn 0' in main function", self.get_current_token()[2], self.get_current_token()[3])
+                        elif next_token_type == ';':
+                             # Allow 'rtrn;'
+                             self.advance() # Past ;
+                             return # Valid rtrn;
+                        else:
+                             # Invalid return value for main
+                             raise SemanticError(f"Main function ('mn') can only return '0' or have no return value ('rtrn;'), got '{next_token_value}'", next_line, next_col)
+                    # --- END ADDED check for main ---
+                    # For non-void, non-main functions, analyze the return expression
+                    else:
+                        start_pos = self.current_token_index
+
+                        # Find the end of the return expression (semicolon)
+                        while self.current_token_index < len(self.token_stream) and self.token_stream[self.current_token_index][0] != ';':
+                            self.advance()
+
+                        if self.current_token_index >= len(self.token_stream) or self.get_current_token()[0] != ';':
+                             raise SemanticError("Expected ';' after return value", line, column)
+
+
+                        end_pos = self.current_token_index
+                        self.current_token_index = start_pos
+
+                        # Analyze the expression
+                        expr_type = self.analyze_expression(end_pos)
+
+                        # Check if return type matches function return type
+                        if expr_type != return_type:
+                            raise SemanticError(f"Return type mismatch: expected '{return_type}', got '{expr_type}'", line, column)
+
+                        # Move past the semicolon
+                        # self.advance() # Move to semicolon (analyze_expression leaves us here)
+                        if self.get_current_token()[0] == ';':
+                            self.advance()  # Move past semicolon
+                        else: # Should not happen if semicolon check above worked
+                            raise SemanticError("Internal Error: Expected semicolon after analyzed return expression", line, column)
 
     def analyze_for_loop(self):
         """Analyze a for loop (fr statement in Conso)"""
@@ -4236,85 +4311,76 @@ class SemanticAnalyzer:
         token_type, token_value, line, column = self.get_current_token()
         if token_type != 'whl':
             raise SemanticError(f"Expected 'whl' keyword, got '{token_type}'", line, column)
-        
+
         self.advance()  # Move past 'whl'
-        
+
         # Process opening parenthesis for condition
         token_type, token_value, line, column = self.get_current_token()
         if token_type != '(':
             raise SemanticError(f"Expected '(' after 'whl', got '{token_type}'", line, column)
-        
+
         # Keep track of the outermost parentheses level
         outer_paren_start = self.current_token_index
         self.advance()  # Move past opening parenthesis
-        
+
         # Find the matching closing parenthesis for the outermost level
         paren_level = 1
-        
+
         while paren_level > 0 and self.current_token_index < len(self.token_stream):
             current_token = self.get_current_token()[0]
             if current_token == '(':
                 paren_level += 1
             elif current_token == ')':
                 paren_level -= 1
-            
+
             if paren_level > 0:
                 self.advance()
-        
+
         # Now we should be at the closing parenthesis of the condition
         if paren_level > 0:
             raise SemanticError("Unclosed parenthesis in 'whl' condition", line, column)
-        
+
         # Now at the closing parenthesis
         outer_paren_end = self.current_token_index
-        
+
         # Reset to just after the opening parenthesis
         self.current_token_index = outer_paren_start + 1
-        
+
         # Analyze the condition using your expression analyzer
         # The condition is everything between the parentheses
         expr_type = self.analyze_expression(outer_paren_end)
-        
-        if expr_type != 'bln':
-            raise SemanticError(f"Condition in 'whl' statement must be of type 'bln', got '{expr_type}'", line, column)
-        
+
+        # --- MODIFIED CHECK: Allow 'nt' or 'bln' ---
+        if expr_type not in ['bln', 'nt']:
+            raise SemanticError(f"Condition in 'whl' statement must be of type 'bln' or 'nt', got '{expr_type}'", line, column)
+        # --- END MODIFIED CHECK ---
+
         # Move to the closing parenthesis and advance past it
         self.current_token_index = outer_paren_end
         self.advance()  # Move past the closing parenthesis
-        
+
         # Process opening brace for while-body
         token_type, token_value, line, column = self.get_current_token()
         if token_type != '{':
             raise SemanticError(f"Expected '{{' to start 'whl' body, got '{token_type}'", line, column)
-        
+
         self.advance()  # Move past '{'
 
         old_in_loop = self.in_loop
         self.in_loop = True
-        
+
         # Existing code for creating a new scope
         while_scope = SymbolTable(parent=self.current_scope, scope_name="while block")
         original_scope = self.current_scope
         self.current_scope = while_scope
-        
+
         # Process while-body statements
         self.analyze_block_statements()
-        
+
         # Just before you restore the original scope, add this:
         self.in_loop = old_in_loop
-        
+
         # Existing code to restore scope
-        self.current_scope = original_scope
-        
-        # Create a new scope for the while-body
-        while_scope = SymbolTable(parent=self.current_scope, scope_name="while block")
-        original_scope = self.current_scope
-        self.current_scope = while_scope
-        
-        # Process while-body statements
-        self.analyze_block_statements()
-        
-        # Restore original scope
         self.current_scope = original_scope
 
     def analyze_do_while_loop(self):
@@ -4322,87 +4388,98 @@ class SemanticAnalyzer:
         token_type, token_value, line, column = self.get_current_token()
         if token_type != 'd':
             raise SemanticError(f"Expected 'd' keyword, got '{token_type}'", line, column)
-        
+
         self.advance()  # Move past 'd'
-        
+
         # Process opening brace for do-body
         token_type, token_value, line, column = self.get_current_token()
         if token_type != '{':
             raise SemanticError(f"Expected '{{' to start 'd' body, got '{token_type}'", line, column)
-        
+
         self.advance()  # Move past '{'
 
         old_in_loop = self.in_loop
         self.in_loop = True
-        
+
         # Create a new scope for the do-body
         do_scope = SymbolTable(parent=self.current_scope, scope_name="do-while block")
         original_scope = self.current_scope
         self.current_scope = do_scope
-        
+
         # Process do-body statements
         self.analyze_block_statements()
-        
-        # Restore original scope
+
+        # Restore original scope (parent scope, not the do-while scope itself)
         self.current_scope = original_scope
-        
+
         # Process 'whl' keyword
         token_type, token_value, line, column = self.get_current_token()
         if token_type != 'whl':
-            raise SemanticError(f"Expected 'whl' after do block, got '{token_type}'", line, column)
-        
+             # If analyze_block_statements finished correctly, current token should be 'whl'
+             # This error might indicate an unclosed block or other issue inside the loop body
+             # Find the line/col of the closing brace '}' if possible
+             loop_end_line, loop_end_col = line, column # Fallback to current token's pos
+             temp_idx = self.current_token_index -1
+             if temp_idx >= 0 and self.token_stream[temp_idx][0] == '}':
+                  loop_end_line, loop_end_col = self.token_stream[temp_idx][2], self.token_stream[temp_idx][3]
+
+             raise SemanticError(f"Expected 'whl' after do block body", loop_end_line, loop_end_col)
+
+
         self.advance()  # Move past 'whl'
-        
+
         # Process opening parenthesis for condition
         token_type, token_value, line, column = self.get_current_token()
         if token_type != '(':
-            raise SemanticError(f"Expected '(' after 'whl', got '{token_type}'", line, column)
-        
+            raise SemanticError(f"Expected '(' after 'whl' in do-while, got '{token_type}'", line, column)
+
         # Keep track of the outermost parentheses level
         outer_paren_start = self.current_token_index
         self.advance()  # Move past opening parenthesis
-        
+
         # Find the matching closing parenthesis for the outermost level
         paren_level = 1
-        
+
         while paren_level > 0 and self.current_token_index < len(self.token_stream):
             current_token = self.get_current_token()[0]
             if current_token == '(':
                 paren_level += 1
             elif current_token == ')':
                 paren_level -= 1
-            
+
             if paren_level > 0:
                 self.advance()
-        
+
         # Now we should be at the closing parenthesis of the condition
         if paren_level > 0:
             raise SemanticError("Unclosed parenthesis in 'd-whl' condition", line, column)
-        
+
         # Now at the closing parenthesis
         outer_paren_end = self.current_token_index
-        
+
         # Reset to just after the opening parenthesis
         self.current_token_index = outer_paren_start + 1
-        
+
         # Analyze the condition using your expression analyzer
         # The condition is everything between the parentheses
         expr_type = self.analyze_expression(outer_paren_end)
-        
-        if expr_type != 'bln':
-            raise SemanticError(f"Condition in 'd-whl' statement must be of type 'bln', got '{expr_type}'", line, column)
-        
+
+        # --- MODIFIED CHECK: Allow 'nt' or 'bln' ---
+        if expr_type not in ['bln', 'nt']:
+            raise SemanticError(f"Condition in 'd-whl' statement must be of type 'bln' or 'nt', got '{expr_type}'", line, column)
+        # --- END MODIFIED CHECK ---
+
         # Move to the closing parenthesis and advance past it
         self.current_token_index = outer_paren_end
         self.advance()  # Move past the closing parenthesis
-        
+
         # FOR DO-WHILE: Look for semicolon, not opening brace
         token_type, token_value, line, column = self.get_current_token()
         if token_type != ';':
             raise SemanticError(f"Expected ';' after 'd-whl' condition, got '{token_type}'", line, column)
-        
+
         self.advance()  # Move past ';'
-        
+
         # Restore the loop flag
         self.in_loop = old_in_loop
 
