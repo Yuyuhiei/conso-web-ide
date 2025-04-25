@@ -288,9 +288,15 @@ async def prepare_interactive_run(request: CodeRequest, response: Response):
 
     # 4. Transpilation
     print("[/api/run/prepare] Starting Transpilation...")
+    print("[/api/run/prepare] Starting Transpilation...")
     transpiled_code = ""
     try:
-        transpiled_code = transpile_from_tokens(detailed_tokens, symbol_table_for_transpiler)
+        # --- Pass global_scope AND function_scopes ---
+        transpiled_code = transpile_from_tokens(
+            detailed_tokens,
+            analyzer.global_scope,      # Pass the global scope table
+            analyzer.function_scopes    # Pass the dictionary of function scope tables
+        )
         print("--- Transpiled C Code ---")
         print(transpiled_code)
         print("--- End Transpiled C Code ---")
