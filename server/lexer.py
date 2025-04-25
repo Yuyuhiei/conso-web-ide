@@ -323,8 +323,7 @@ class Lexer:
         # Handle escape sequences
         if char_value == "\\":
             try:
-                # ADD '0': '\0' to this dictionary
-                escape_map = {"'": "'", "\\": "\\", "n": "\n", "t": "\t", "r": "\r", '0': '\0'}
+                escape_map = {"'": "'", "\\": "\\", "n": "\n", "t": "\t", "r": "\r"}
                 char_value = escape_map[self.current_char]
                 self.advance()
             except KeyError:

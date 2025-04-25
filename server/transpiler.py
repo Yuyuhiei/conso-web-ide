@@ -40,9 +40,8 @@ class ConsoTranspilerTokenBased:
         self.symbol_table = symbol_table
         # self.user_inputs = user_inputs if user_inputs is not None else {} # REMOVED THIS LINE
         self.current_pos = 0
-        self.output_parts = [] 
+        self.output_parts = []
         self.current_indent_level = 0
-        self.input_buffer_declared_in_scope = set() # NEW: Track scopes where buffer is declared
 
         # Mappings (Keep existing mappings)
         self.type_mapping = {
@@ -193,147 +192,81 @@ class ConsoTranspilerTokenBased:
     def _process_function_definition_from_tokens(self):
         """Processes function definition from tokens."""
         start_pos = self.current_pos; func_name = "<unknown>"
-        func_body_tokens = [] # Store tokens within the function block
         try:
-            self._consume('fnctn')
-            type_token_type, type_token_value, _ = self._consume() # Get return type token
-            if type_token_type == 'id': c_return_type = type_token_value
-            elif type_token_type in self.type_mapping: c_return_type = self.type_mapping[type_token_type]
-            else: raise TranspilerError(f"Invalid function return type token: {type_token_type}")
-
+            self._consume('fnctn'); type_token = self._consume(); return_type_conso = type_token[0]
+            c_return_type = self.type_mapping.get(return_type_conso, return_type_conso)
             _, func_name, _ = self._consume('id'); self._consume('(')
             params_c = self._process_parameters_from_tokens(); self._consume(')')
-            self._consume('{');
+            self._consume('{'); definition_lines = [f"{c_return_type} {func_name}({params_c}) {{"]
+            self.current_indent_level = 1
 
-            # --- Find the end of the function block to get its tokens ---
-            temp_pos = self.current_pos
-            brace_level = 1 # Start inside the function's {
+            # Process function body until we find the closing brace
+            brace_level = 1  # We're already inside the function
             while brace_level > 0:
-                token_type = self._peek(temp_pos - self.current_pos) # Peek relative
-                if token_type is None: raise TranspilerError(f"Unexpected end of stream searching for '}}' in function '{func_name}'")
-                if token_type == '{': brace_level += 1
-                elif token_type == '}': brace_level -= 1
-                if brace_level == 0: # Found the matching closing brace
-                    func_body_tokens = self.tokens[self.current_pos : temp_pos]
-                    break
-                temp_pos += 1
-                if temp_pos >= len(self.tokens): raise TranspilerError(f"Could not find closing '}}' for function '{func_name}'")
-            # --- End token collection ---
+                if self._peek() is None:
+                    raise TranspilerError(f"Unexpected end of stream inside function '{func_name}'")
 
-            definition_lines = [f"{c_return_type} {func_name}({params_c}) {{"]
-            self.current_indent_level = 1 # Start indent inside function
+                # Track brace level to ensure we process the entire function body
+                if self._peek() == '{':
+                    self._consume('{')
+                    brace_level += 1
+                    statement_c = "{"
+                elif self._peek() == '}':
+                    self._consume('}')
+                    brace_level -= 1
+                    if brace_level == 0:  # End of function
+                        break
+                    statement_c = "}"
+                else:
+                    # Process other statements
+                    statement_c = self._process_statement_from_tokens()
 
-            # --- NEW: Check if 'npt' exists and declare buffer if needed ---
-            has_npt = any(self._get_token_info(t)[0] == 'npt' for t in func_body_tokens)
-            if has_npt:
-                buffer_size = 1024 # Consistent buffer size
-                definition_lines.append(self._indent(1) + f"char conso_input_buffer[{buffer_size}]; // Input buffer for this scope")
-                self.input_buffer_declared_in_scope.add(func_name) # Mark func_name as having buffer
-            # --- END NEW ---
-
-            # Process function body statements
-            body_lines = []
-            while self._peek() != '}': # Process until the actual closing brace is consumed
-                if self._peek() is None: raise TranspilerError(f"Unexpected end of stream inside function '{func_name}'")
-                statement_start_pos = self.current_pos
-                statement_c = self._process_statement_from_tokens(current_scope_name=func_name) # Pass scope name
                 if statement_c is not None:
                     indent_level = self.current_indent_level
-                    if statement_c == "}": indent_level = max(0, indent_level - 1)
-                    body_lines.append(self._indent(indent_level) + statement_c)
-                    if statement_c.endswith("{"): self.current_indent_level += 1
-                    if statement_c == "}": self.current_indent_level = max(0, self.current_indent_level - 1)
-                elif self.current_pos == statement_start_pos:
-                    skipped_token = self._consume()[0]
-                    print(f"Warning: Skipping unhandled token '{skipped_token}' inside function '{func_name}'")
+                    if statement_c == '}':
+                        indent_level = max(0, indent_level - 1) # Adjust indent before adding '}'
+                    definition_lines.append(self._indent(indent_level) + statement_c)
+                    if statement_c.endswith('{'):
+                        self.current_indent_level += 1
+                    if statement_c == '}':
+                        self.current_indent_level = max(0, self.current_indent_level - 1)
 
-            self._consume('}') # Consume the function's closing brace
-            self.current_indent_level = 0 # Reset indent level
-
-            definition_lines.extend(body_lines)
-            definition_lines.append("}") # Add the final closing brace for the function
+            # Add closing brace for function
+            self.current_indent_level = 0
+            definition_lines.append("}")
             return "\n".join(definition_lines)
 
         except TranspilerError as e:
-            # (Keep existing error handling)
-            print(f"Error processing function '{func_name}': {e}", file=sys.stderr)
+            print(f"Error processing function '{func_name}': {e}")
             self.current_pos = start_pos
             try: self._consume('fnctn')
             except: pass
-            return f"// ERROR processing function '{func_name}': {e}"
-        # Add cleanup for the scope tracking if needed on error
-        finally:
-            if func_name != "<unknown>" and func_name in self.input_buffer_declared_in_scope:
-                self.input_buffer_declared_in_scope.remove(func_name)
+            return None
 
     def _process_main_definition_from_tokens(self):
         """Processes main function definition from tokens."""
         start_pos = self.current_pos
-        main_body_tokens = [] # Store tokens within the main block
         try:
             self._consume('mn'); self._consume('('); self._consume(')'); self._consume('{')
-            # --- Find the end of the main block to get its tokens ---
-            temp_pos = self.current_pos
-            brace_level = 1 # Start inside the main block's {
-            while True:
-                token_type = self._peek(temp_pos - self.current_pos) # Peek relative to current pos
-                if token_type is None:
-                    raise TranspilerError("Unexpected end of stream searching for 'end;' in main")
-                if token_type == '{': brace_level += 1
-                elif token_type == '}': brace_level -= 1
-                elif token_type == 'end' and brace_level <= 1: # Found 'end' at the main level
-                    main_body_tokens = self.tokens[self.current_pos : temp_pos] # Get tokens between { and end
-                    break
-                temp_pos += 1
-                if temp_pos >= len(self.tokens): # Safety break
-                    raise TranspilerError("Could not find 'end;' for main block")
-            # --- End token collection ---
-
             definition_lines = ["int main(int argc, char *argv[]) {"]
             self.current_indent_level = 1
-
-            # --- NEW: Check if 'npt' exists and declare buffer if needed ---
-            has_npt = any(self._get_token_info(t)[0] == 'npt' for t in main_body_tokens)
-            if has_npt:
-                buffer_size = 1024 # Consistent buffer size
-                definition_lines.append(self._indent(1) + f"char conso_input_buffer[{buffer_size}]; // Input buffer for this scope")
-                self.input_buffer_declared_in_scope.add("main") # Mark 'main' as having buffer
-            # --- END NEW ---
-
-            body_lines = []
             while self._peek() != 'end':
-                # (Keep the existing loop body to process statements)
-                if self._peek() is None: raise TranspilerError("Unexpected end of stream inside main definition, missing 'end;'?")
-                statement_start_pos = self.current_pos
-                statement_c = self._process_statement_from_tokens(current_scope_name="main") # Pass scope name
+                if self._peek() is None: raise TranspilerError("Unexpected end of stream inside main definition")
+                statement_c = self._process_statement_from_tokens()
                 if statement_c is not None:
                     indent_level = self.current_indent_level
-                    if statement_c == "}": indent_level = max(0, indent_level - 1)
-                    body_lines.append(self._indent(indent_level) + statement_c)
-                    if statement_c.endswith("{"): self.current_indent_level += 1
-                    if statement_c == "}": self.current_indent_level = max(0, self.current_indent_level - 1)
-                elif self.current_pos == statement_start_pos:
-                    skipped_token = self._consume()[0]
-                    print(f"Warning: Skipping unhandled token '{skipped_token}' inside 'mn' block")
-
+                    if statement_c == '}': indent_level = max(0, indent_level - 1)
+                    definition_lines.append(self._indent(indent_level) + statement_c)
+                    if statement_c.endswith('{'): self.current_indent_level += 1
+                    if statement_c == '}': self.current_indent_level = max(0, self.current_indent_level -1)
             self._consume('end'); self._consume(';')
-            self.current_indent_level = 0 # Reset indent level
-
-            definition_lines.extend(body_lines)
+            self.current_indent_level = 0
             definition_lines.append(self._indent(1) + "return 0; // Corresponds to Conso 'end;'")
             definition_lines.append("}")
             return "\n".join(definition_lines)
-        except TranspilerError as e:
-            # (Keep existing error handling)
-            print(f"Error processing main function: {e}", file=sys.stderr)
-            self.current_pos = start_pos
-            try: self._consume('mn')
-            except: pass
-            return f"// ERROR processing 'mn' function: {e}"
-        # Add cleanup for the scope tracking if needed on error
-        finally:
-            if "main" in self.input_buffer_declared_in_scope:
-                self.input_buffer_declared_in_scope.remove("main")
+        except TranspilerError as e: print(f"Error processing main function: {e}"); self.current_pos = start_pos;
+        try: self._consume('mn')
+        except: pass; return None
 
     def _process_parameters_from_tokens(self):
         """Processes parameters from token stream until ')' is found."""
@@ -355,7 +288,7 @@ class ConsoTranspilerTokenBased:
         return ", ".join(params) if params else "void"
 
     # --- Statement Processing (Token-Based Dispatcher) ---
-    def _process_statement_from_tokens(self, is_struct_member=False, is_global=False, current_scope_name=None): # Added current_scope_name
+    def _process_statement_from_tokens(self, is_struct_member=False, is_global=False):
         """Processes a single statement from the current token position."""
         token_type = self._peek()
         if token_type is None: return ""
@@ -424,7 +357,7 @@ class ConsoTranspilerTokenBased:
             if token_type == 'prnt': return self._process_print_from_tokens()
             # --- MODIFICATION: Check specifically for the input pattern ---
             elif token_type == 'id' and self._peek(1) == '=' and self._peek(2) == 'npt':
-                  return self._process_input_from_tokens(current_scope_name=current_scope_name)
+                 return self._process_input_from_tokens()
             # --- END MODIFICATION ---
             elif token_type == 'rtrn': return self._process_return_from_tokens()
             elif token_type == 'f': return self._process_if_from_tokens()
@@ -842,10 +775,10 @@ class ConsoTranspilerTokenBased:
              return f'printf("{format_str}", {args_str}); fflush(stdout);'
 
     # Helper method to check if a variable is a string
-    def _is_string_var(self, token): 
+    def _is_string_var(self, token):
         """Check if a token represents a string variable"""
         token_type, token_value = self._get_token_info(token)[:2]
-        if token_type != 'id': 
+        if token_type != 'id':
             return False
 
         if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
@@ -854,161 +787,172 @@ class ConsoTranspilerTokenBased:
 
         return False
 
-    def _process_input_from_tokens(self, current_scope_name): # Added current_scope_name
+    def _process_input_from_tokens(self):
         """
-        Processes an input statement...
-        Uses current_scope_name for symbol lookup.
-        Assumes 'conso_input_buffer' is declared at the start of the current scope.
+        Processes an input statement (var = npt("prompt");) by generating
+        C code using printf for the prompt and standard input functions
+        (like scanf or fgets/sscanf) based on the variable type.
+        Relies on self.symbol_table for type lookup.
         """
         start_pos = self.current_pos
-        line_num = '?'; var_name = '<unknown>'
+        line_num = '?'
+        var_name = '<unknown>' # Initialize for error reporting
 
         try:
-            # ... (consume id, =, npt, (, prompt, ), ;) ...
+            # Consume 'id', '=', 'npt', '('
             _, var_name, token_full = self._consume('id')
             line_num = self._get_token_info(token_full)[2]
             self._consume('=')
             self._consume('npt')
             self._consume('(')
+
+            # Consume and store the prompt string literal
             prompt_text = ""
-            if self._peek() == 'strnglit': _, prompt_text, _ = self._consume('strnglit')
+            if self._peek() == 'strnglit':
+                _, prompt_text, _ = self._consume('strnglit')
+            # Escape prompt for C string literal
             c_prompt = prompt_text.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+
+            # Consume ')' and ';'
             self._consume(')')
             self._consume(';')
 
-
-            # --- Determine variable type using SCOPED lookup ---
+            # --- Determine variable type from symbol table ---
             var_type = None
-            is_array = False
-            array_size = None
-            symbol = None # Initialize symbol
-
+            is_array = False # Check if it's an array type if needed
             if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                try:
-                    # *** THIS IS THE KEY CHANGE ***
-                    # Attempt to look up within the specific scope.
-                    # Adjust this call based on your actual symbol table object's method.
-                    # Example: lookup(name, scope=scope_name)
-                    # Example: lookup_in_scope(name, scope_name)
-                    # Example: get_scope(scope_name).lookup(name)
-                    print(f"[Input Lookup] Trying lookup for '{var_name}' in scope '{current_scope_name}'") # DEBUG
-                    symbol = self.symbol_table.lookup(var_name, scope=current_scope_name) # ADJUST THIS LINE
-
-                except AttributeError:
-                    # Fallback if lookup doesn't support scope argument (might just search global)
-                    print(f"[Input Lookup Warning] Symbol table lookup might not support scope '{current_scope_name}'. Falling back.")
-                    symbol = self.symbol_table.lookup(var_name)
-                except Exception as lookup_err:
-                    print(f"[Input Lookup Error] Error during scoped lookup for '{var_name}' in '{current_scope_name}': {lookup_err}")
-                    # Optional: Fallback to global lookup on error?
-                    # symbol = self.symbol_table.lookup(var_name)
-                    pass # Let it proceed to the 'symbol is None' check
-
+                symbol = self.symbol_table.lookup(var_name)
                 if symbol:
                     var_type = getattr(symbol, 'data_type', None)
-                    is_array = getattr(symbol, 'is_array', False)
-                    array_size = getattr(symbol, 'size', None)
+                    is_array = getattr(symbol, 'is_array', False) # Check if it's an array
                 else:
-                    # Error if not found even after trying scoped lookup
-                    raise TranspilerError(f"Variable '{var_name}' not found in symbol table scope '{current_scope_name}' for input", line_num)
+                     raise TranspilerError(f"Variable '{var_name}' not found in symbol table for input", line_num)
             else:
-                raise TranspilerError("Symbol table not available or lacks 'lookup' method for input processing", line_num)
+                 raise TranspilerError("Symbol table not available for input processing", line_num)
 
             if var_type is None:
-                raise TranspilerError(f"Could not determine type for variable '{var_name}' in scope '{current_scope_name}'", line_num)
+                 raise TranspilerError(f"Could not determine type for variable '{var_name}' during input processing", line_num)
 
-            # --- Generate C code for input (remains the same) ---
+            # --- Generate C code for input ---
             c_input_code = []
+            # 1. Print the prompt and flush stdout
             c_input_code.append(f'printf("{c_prompt}"); fflush(stdout);')
-            fixed_buffer_name = "conso_input_buffer"
-            buffer_size = 1024
 
-            # (Keep the rest of the input code generation logic as it was)
+            # 2. Generate input reading code based on type
+            # Define a buffer size (adjust if needed)
+            buffer_size = 1024
+            buffer_decl = f"char input_buffer[{buffer_size}];" # Declare buffer once if needed multiple times?
+
             if var_type == 'strng':
-                c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                c_input_code.append(f'    {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
-                if is_array and array_size:
-                    c_input_code.append(f'    strncpy({var_name}, {fixed_buffer_name}, {array_size} - 1);')
-                    c_input_code.append(f'    {var_name}[{array_size} - 1] = \'\\0\';')
-                else:
-                    c_input_code.append(f'    /* WARNING: Assuming {var_name} is char*. Using strdup requires free() later. */')
-                    c_input_code.append(f'    {var_name} = strdup({fixed_buffer_name});')
+                # Safest: Use fgets for strings
+                # Note: Assumes var_name is char*. Requires memory allocation if not literal.
+                # If var_name is char array[SIZE], use strncpy.
+                # For simplicity assuming char* and using strdup (requires #include <string.h>)
+                # Ensure buffer_decl is added if not already present in the scope
+                c_input_code.append(buffer_decl) # Declare buffer locally for this input
+                c_input_code.append(f'if (fgets(input_buffer, {buffer_size}, stdin) != NULL) {{')
+                c_input_code.append(f'    input_buffer[strcspn(input_buffer, "\\n")] = 0; // Remove trailing newline')
+                # If var_name is char*, strdup allocates memory. free() is needed later.
+                # If var_name is char array[N], use: strncpy(var_name, input_buffer, N-1); var_name[N-1] = '\\0';
+                c_input_code.append(f'    {var_name} = strdup(input_buffer); // Allocate and copy')
                 c_input_code.append(f'}} else {{')
-                c_input_code.append(f'    /* Handle fgets error or EOF */')
-                if is_array: c_input_code.append(f'    {var_name}[0] = \'\\0\';')
-                else: c_input_code.append(f'    {var_name} = NULL;')
+                c_input_code.append(f'    // Handle fgets error or EOF')
+                c_input_code.append(f'    {var_name} = NULL; // Or assign default / handle error')
                 c_input_code.append(f'}}')
+
             elif var_type == 'nt':
-                c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%d", &{var_name}) != 1) {{')
-                c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid integer input for {var_name}.\\n");')
-                c_input_code.append(f'        {var_name} = {self.default_values.get("nt", "0")};')
+                # Option 1: Simple scanf (less safe)
+                # c_input_code.append(f'scanf("%d", &{var_name});')
+                # c_input_code.append(f'while (getchar() != \'\\n\'); // Consume trailing newline')
+                # Option 2: Safer fgets + sscanf
+                c_input_code.append(buffer_decl)
+                c_input_code.append(f'if (fgets(input_buffer, {buffer_size}, stdin) != NULL) {{')
+                c_input_code.append(f'    if (sscanf(input_buffer, "%d", &{var_name}) != 1) {{')
+                c_input_code.append(f'        // Handle parsing error, e.g., set default or print error')
+                c_input_code.append(f'        {var_name} = 0; // Default value on parse error')
+                c_input_code.append(f'        fprintf(stderr, "Invalid integer input.\\n");')
                 c_input_code.append(f'    }}')
                 c_input_code.append(f'}} else {{')
-                c_input_code.append(f'    /* Handle fgets error or EOF */')
-                c_input_code.append(f'    {var_name} = {self.default_values.get("nt", "0")};')
+                c_input_code.append(f'    // Handle fgets error or EOF')
+                c_input_code.append(f'    {var_name} = 0;')
                 c_input_code.append(f'}}')
-            # ... (rest of the types: dbl, chr, bln) ...
+
             elif var_type == 'dbl':
-                c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%lf", &{var_name}) != 1) {{')
-                c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid double input for {var_name}.\\n");')
-                c_input_code.append(f'        {var_name} = {self.default_values.get("dbl", "0.0")};')
+                # Option 1: Simple scanf
+                # c_input_code.append(f'scanf("%lf", &{var_name});')
+                # c_input_code.append(f'while (getchar() != \'\\n\');')
+                # Option 2: Safer fgets + sscanf
+                c_input_code.append(buffer_decl)
+                c_input_code.append(f'if (fgets(input_buffer, {buffer_size}, stdin) != NULL) {{')
+                c_input_code.append(f'    if (sscanf(input_buffer, "%lf", &{var_name}) != 1) {{')
+                c_input_code.append(f'        {var_name} = 0.0; // Default value on parse error')
+                c_input_code.append(f'        fprintf(stderr, "Invalid double input.\\n");')
                 c_input_code.append(f'    }}')
                 c_input_code.append(f'}} else {{')
-                c_input_code.append(f'    /* Handle fgets error or EOF */')
-                c_input_code.append(f'    {var_name} = {self.default_values.get("dbl", "0.0")};')
+                c_input_code.append(f'    {var_name} = 0.0;')
                 c_input_code.append(f'}}')
+
             elif var_type == 'chr':
-                c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                c_input_code.append(f'    if ({fixed_buffer_name}[0] != \'\\n\' && {fixed_buffer_name}[0] != \'\\0\') {{')
-                c_input_code.append(f'        {var_name} = {fixed_buffer_name}[0];')
+                # Option 1: scanf with space to skip leading whitespace (reads only one char)
+                # c_input_code.append(f'scanf(" %c", &{var_name});') # Note the space before %c
+                # c_input_code.append(f'while (getchar() != \'\\n\');')
+                 # Option 2: Safer fgets (reads whole line, takes first char)
+                c_input_code.append(buffer_decl)
+                c_input_code.append(f'if (fgets(input_buffer, {buffer_size}, stdin) != NULL) {{')
+                c_input_code.append(f'    if (input_buffer[0] != \'\\n\' && input_buffer[0] != \'\\0\') {{ // Check if input is not empty')
+                c_input_code.append(f'        {var_name} = input_buffer[0];')
                 c_input_code.append(f'    }} else {{')
-                c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid character input for {var_name}.\\n");')
-                c_input_code.append(f'        {var_name} = {self.default_values.get("chr", "\'\\\\0\'")};')
+                c_input_code.append(f'        {var_name} = \'\\0\'; // Default for empty input')
+                c_input_code.append(f'        fprintf(stderr, "Invalid character input.\\n");')
                 c_input_code.append(f'    }}')
                 c_input_code.append(f'}} else {{')
-                c_input_code.append(f'    /* Handle fgets error or EOF */')
-                c_input_code.append(f'    {var_name} = {self.default_values.get("chr", "\'\\\\0\'")};')
+                c_input_code.append(f'    {var_name} = \'\\0\';')
                 c_input_code.append(f'}}')
+
+
             elif var_type == 'bln':
-                c_input_code.append(f'int temp_bln_input;')
-                c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%d", &temp_bln_input) == 1) {{')
-                c_input_code.append(f'        {var_name} = (temp_bln_input != 0);')
+                # Read as integer (0 or 1), or could read string "tr"/"fls" and convert
+                # Reading as int is simpler for C side
+                c_input_code.append(buffer_decl)
+                c_input_code.append(f'int temp_bln_input;') # Temporary int for scanf
+                c_input_code.append(f'if (fgets(input_buffer, {buffer_size}, stdin) != NULL) {{')
+                c_input_code.append(f'    if (sscanf(input_buffer, "%d", &temp_bln_input) == 1) {{')
+                c_input_code.append(f'        {var_name} = (temp_bln_input != 0); // Assign 1 if non-zero, 0 otherwise')
                 c_input_code.append(f'    }} else {{')
-                c_input_code.append(f'        {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
-                c_input_code.append(f'        if (strcmp({fixed_buffer_name}, "tr") == 0) {{ {var_name} = 1; }}')
-                c_input_code.append(f'        else if (strcmp({fixed_buffer_name}, "fls") == 0) {{ {var_name} = 0; }}')
-                c_input_code.append(f'        else {{')
-                c_input_code.append(f'            fprintf(stderr, "\\nError: Invalid boolean input for {var_name} (expected 0, 1, tr, or fls).\\n");')
-                c_input_code.append(f'            {var_name} = {self.default_values.get("bln", "0")};')
-                c_input_code.append(f'        }}')
+                 # Alternative: Check for "tr" / "fls" strings
+                 # c_input_code.append(f'    input_buffer[strcspn(input_buffer, "\\n")] = 0;')
+                 # c_input_code.append(f'    if (strcmp(input_buffer, "tr") == 0) {{ {var_name} = 1; }}')
+                 # c_input_code.append(f'    else if (strcmp(input_buffer, "fls") == 0) {{ {var_name} = 0; }}')
+                 # c_input_code.append(f'    else {{')
+                c_input_code.append(f'        {var_name} = 0; // Default value on parse error')
+                c_input_code.append(f'        fprintf(stderr, "Invalid boolean input (expected 0 or 1).\\n");')
+                 # c_input_code.append(f'    }}') # Closing brace for strcmp alternative
                 c_input_code.append(f'    }}')
                 c_input_code.append(f'}} else {{')
-                c_input_code.append(f'    /* Handle fgets error or EOF */')
-                c_input_code.append(f'    {var_name} = {self.default_values.get("bln", "0")};')
+                c_input_code.append(f'    {var_name} = 0;')
                 c_input_code.append(f'}}')
+
             else:
                 raise TranspilerError(f"Input ('npt') not supported for type '{var_type}'", line_num)
 
+            # --- FIX: Join the generated C lines without extra braces ---
+            # Join with newlines to create a sequence of statements
             return "\n".join(c_input_code)
+            # --- END FIX ---
 
         except TranspilerError as e:
-            # (Keep existing error handling)
-            print(f"Error processing input statement for '{var_name}' in scope '{current_scope_name}': {e.message}", file=sys.stderr) # Added scope to error
+            print(f"Error processing input statement for '{var_name}' near line {e.line_num if e.line_num else line_num}: {e.message}")
             self.current_pos = start_pos
             while self._peek() not in [';', '}', '{', None]: self._skip_token()
             if self._peek() == ';': self._skip_token()
             return f"// TRANSPILER ERROR (Input): {e.message}"
         except Exception as e:
-            # (Keep existing error handling)
-            err_line = line_num
-            print(f"Unexpected error processing input for '{var_name}' in scope '{current_scope_name}': {e}", file=sys.stderr) # Added scope to error
-            import traceback
-            traceback.print_exc()
-            if self.current_pos == start_pos: self._skip_token()
-            return f"// UNEXPECTED TRANSPILER ERROR (Input): {e}"
+             err_line = line_num
+             print(f"Unexpected error processing input for '{var_name}' near line {err_line}: {e}")
+             import traceback
+             traceback.print_exc()
+             if self.current_pos == start_pos: self._skip_token()
+             return f"// UNEXPECTED TRANSPILER ERROR (Input): {e}"
 
     def _process_return_from_tokens(self):
         self._consume('rtrn')
