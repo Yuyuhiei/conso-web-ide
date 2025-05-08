@@ -420,76 +420,100 @@ class ConsoTranspilerTokenBased:
 
     # --- Statement Processing (Token-Based Dispatcher) ---
     def _process_statement_from_tokens(self, is_struct_member=False, is_global=False, current_scope_name=None):
-        """Processes a single statement from the current token position."""
+        """
+        Processes a single statement from the current token position.
+        This function dispatches to specific processing methods based on the
+        initial token(s) of the statement.
+        Modified to correctly identify input statements with complex targets.
+        """
         token_type = self._peek()
-        if token_type is None: return ""
+        if token_type is None:
+            # Return empty string if there are no more tokens
+            return ""
 
-        start_pos = self.current_pos; line = '?'
-        try: line = self._get_token_info(self.tokens[start_pos])[2]
-        except: pass # Ignore errors getting line number for error reporting itself
+        start_pos = self.current_pos # Store the starting position for error recovery
+        line_num = '?'
+        try:
+            # Attempt to get the line number from the first token
+            line_num = self._get_token_info(self.tokens[start_pos])[2]
+        except IndexError:
+            # Handle case where there's no token at start_pos (should be caught by token_type is None check, but defensive)
+            pass
+        except Exception:
+            # Ignore other errors getting line number for error reporting itself
+            pass
 
         try:
             # --- Handle struct members first ---
             if is_struct_member:
-                # Struct members cannot be const and must be standard types
+                # Struct members can only be declarations (type followed by id, possibly array)
                 if token_type in self.type_mapping and token_type != 'dfstrct':
-                     return self._process_declaration_from_tokens(assign_default=False, is_const=False) # Struct members are never const
+                    # Process as a declaration. Struct members are not const and don't get default assignment here.
+                    return self._process_declaration_from_tokens(assign_default=False, is_const=False)
                 else:
-                     # Skip unexpected tokens within struct def
-                     print(f"Warning: Skipping non-declaration token '{token_type}' inside struct near line {line}");
-                     self._consume();
-                     return "" # Return empty string, effectively skipping
+                    # If an unexpected token is found within a struct definition, print a warning and skip it.
+                    print(f"Warning: Skipping non-declaration token '{token_type}' inside struct near line {line_num}");
+                    self._consume(); # Consume the unexpected token
+                    return "" # Return empty string, effectively skipping this line in the output
 
             # --- Processing for global, function, or main scope ---
 
-            # Handle block delimiters first
-            if token_type == '{': self._consume(); return "{"
-            if token_type == '}': self._consume(); return "}"
+            # Handle block delimiters ({ and }) immediately
+            if token_type == '{':
+                self._consume(); # Consume the opening brace
+                return "{" # Return the C equivalent
+            if token_type == '}':
+                self._consume(); # Consume the closing brace
+                return "}" # Return the C equivalent
 
-            # --- Check for Constant Declaration ---
+            # --- Check for Constant Declaration (cnst type id ...) ---
             is_const_decl = False
             if token_type == 'cnst':
                 # Peek ahead to see if a valid type follows 'cnst'
                 next_type_peek = self._peek(1)
+                # Check if the next token is a recognized data type (excluding struct definition itself)
                 if next_type_peek in self.type_mapping and next_type_peek != 'dfstrct':
-                    # It's a constant declaration, consume 'cnst'
+                    # It's a constant declaration, consume the 'cnst' token
                     self._consume('cnst')
                     is_const_decl = True
-                    token_type = self._peek() # Update token_type to the actual data type (nt, dbl, etc.)
+                    # Update token_type to the actual data type token that follows 'cnst'
+                    token_type = self._peek()
                 else:
-                    # 'cnst' not followed by a valid type - treat as error or unexpected token
-                    # For simplicity, let it fall through to be handled as an 'other' statement or error later
-                    pass # Or raise TranspilerError(f"Expected type after 'cnst', got '{next_type_peek}'", line)
+                    # 'cnst' not followed by a valid type - this might be an error or part of another expression.
+                    # For now, let it fall through to be handled as an 'other' statement or error later.
+                    pass # Semantic analysis should ideally catch this error earlier.
 
-            # --- Check for Regular or Constant Declaration ---
+            # --- Check for Regular or Constant Declaration (type id ...) ---
             # Now token_type is either the original peeked type or the type after 'cnst'
             if token_type in self.type_mapping and token_type != 'dfstrct':
-                # Pass the is_const flag determined above
-                # Global consts are assigned defaults if not initialized (handled inside)
-                # Local consts require initialization (handled by semantic analysis)
+                # Process as a variable declaration (regular or constant)
+                # Pass the is_const flag determined above.
+                # assign_default=True means non-array, non-const variables without initializer get default values.
                 return self._process_declaration_from_tokens(assign_default=True, is_const=is_const_decl)
 
-            # --- Check for Struct Instance Declaration ---
+            # --- Check for Struct Instance Declaration (dfstrct struct_name id ...) ---
             elif token_type == 'dfstrct':
-                # Struct instances cannot be const with 'cnst' keyword in this design
+                # Process as a struct instance declaration.
+                # Struct instances cannot be declared 'const' using the 'cnst' keyword in this grammar.
                 return self._process_dfstrct_from_tokens()
 
             # --- Statements only valid inside functions/main ---
             if is_global:
-                 # If we reach here in global scope with an unhandled token, it's an error
-                 print(f"Error: Statement type '{token_type}' not allowed at global scope near line {line}")
-                 # Skip until semicolon to attempt recovery
-                 while self._peek() not in [';', None]: self._skip_token()
+                 # If we reach here in global scope with an unhandled token type, it's an error
+                 print(f"Error: Statement type '{token_type}' not allowed at global scope near line {line_num}", file=sys.stderr)
+                 # Attempt to recover by skipping tokens until a potential statement boundary (semicolon, brace)
+                 while self._peek() not in [';', '}', None] and self.current_pos < len(self.tokens):
+                     self._skip_token()
+                 # Consume the boundary token if it's a semicolon
                  if self._peek() == ';': self._skip_token()
+                 # Return a C comment indicating the error
                  return f"// ERROR: Statement type '{token_type}' not allowed at global scope"
 
             # --- Function/Main Scope Statements ---
-            # These should only be processed if not is_global
+            # These should only be processed if we are NOT in the global scope
+
+            # Check for specific keywords first
             if token_type == 'prnt': return self._process_print_from_tokens()
-            # --- MODIFICATION: Check specifically for the input pattern ---
-            elif token_type == 'id' and self._peek(1) == '=' and self._peek(2) == 'npt':
-                 return self._process_input_from_tokens()
-            # --- END MODIFICATION ---
             elif token_type == 'rtrn': return self._process_return_from_tokens()
             elif token_type == 'f': return self._process_if_from_tokens()
             elif token_type == 'lsf': return self._process_else_if_from_tokens()
@@ -500,28 +524,79 @@ class ConsoTranspilerTokenBased:
             elif token_type == 'swtch': return self._process_switch_from_tokens()
             elif token_type == 'cs': return self._process_case_from_tokens()
             elif token_type == 'dflt': return self._process_default_from_tokens()
-            elif token_type == 'brk': self._consume('brk'); self._consume(';'); return "break;"
-            elif token_type == 'cntn': self._consume('cntn'); self._consume(';'); return "continue;"
-            else:
-                # Handle assignments, function calls, etc.
-                return self._process_other_statement_from_tokens()
+            elif token_type == 'brk':
+                self._consume('brk'); self._consume(';'); # Consume 'brk' and ';'
+                return "break;" # Return the C equivalent
+            elif token_type == 'cntn':
+                self._consume('cntn'); self._consume(';'); # Consume 'cntn' and ';'
+                return "continue;" # Return the C equivalent
+            # Add other specific statements here
+
+            # --- NEW/MODIFIED: Handle Input Statement (target = npt(...)) ---
+            # This requires looking ahead to find the '=' and 'npt' tokens.
+            # We need to consume tokens until we find '=' at the top level (outside parens/brackets).
+            temp_pos = self.current_pos # Use a temporary position to peek ahead without consuming
+            temp_paren_level = 0
+            temp_bracket_level = 0
+            found_assignment = False
+
+            # Scan ahead to find the '=' token at the top level
+            while temp_pos < len(self.tokens):
+                peek_token_type = self._peek(temp_pos - self.current_pos)
+                if peek_token_type is None: break # Reached end of stream
+
+                if peek_token_type == '(': temp_paren_level += 1
+                elif peek_token_type == ')': temp_paren_level -= 1
+                elif peek_token_type == '[': temp_bracket_level += 1
+                elif peek_token_type == ']': temp_bracket_level -= 1
+                elif peek_token_type == '=' and temp_paren_level == 0 and temp_bracket_level == 0:
+                    found_assignment = True
+                    break # Found the top-level assignment operator
+
+                temp_pos += 1 # Move to the next token
+
+            # If an assignment was found, check if the RHS starts with 'npt'
+            if found_assignment:
+                # Peek at the token immediately after the '='
+                token_after_assignment = self._peek(temp_pos - self.current_pos + 1)
+                if token_after_assignment == 'npt':
+                    # This is an input statement! Dispatch to the input processor.
+                    # _process_input_from_tokens will consume the LHS, '=', 'npt(...)', and ';'
+                    return self._process_input_from_tokens()
+                # If the token after '=' is not 'npt', it's a regular assignment or other expression.
+                # Let it fall through to _process_other_statement_from_tokens.
+
+
+            # --- Handle Other Statements (Assignments, Function Calls, Expressions) ---
+            # If none of the specific statement types matched, process it as a general statement.
+            # This includes assignments that are NOT input statements, function calls,
+            # standalone expressions (though less common in C), etc.
+            return self._process_other_statement_from_tokens()
 
         except TranspilerError as e:
-             print(f"Error processing statement near line {e.line_num if e.line_num else line}: {e.message}")
-             self.current_pos = start_pos # Try to reset position
-             # Skip until semicolon or brace to attempt recovery
-             while self._peek() not in [';', '}', None]: self._skip_token()
+             # Catch custom transpiler errors
+             print(f"Error processing statement near line {e.line_num if e.line_num else line_num}: {e.message}", file=sys.stderr)
+             # Attempt to reset the token position to the start of the statement for recovery
+             self.current_pos = start_pos
+             # Skip tokens until a potential statement boundary (semicolon, brace) to avoid infinite loops
+             while self._peek() not in [';', '}', '{', None] and self.current_pos < len(self.tokens):
+                 self._skip_token()
+             # Consume the boundary token if it's a semicolon
              if self._peek() == ';': self._skip_token()
-             return f"// ERROR: {e.message}"
+             # Return a C comment indicating the error
+             return f"// TRANSPILER ERROR: {e.message}"
         except Exception as e:
-             # Safely get line number for unexpected errors
-             err_line = '?'
-             try: err_line = self._get_token_info(self.tokens[start_pos])[2]
-             except: pass
-             print(f"Unexpected error processing statement near line {err_line}: {e}")
-             # import traceback; traceback.print_exc() # Uncomment for debug
-             if self.current_pos == start_pos: self._skip_token() # Advance at least one token
-             return f"// UNEXPECTED ERROR processing statement: {e}"
+             # Catch any unexpected Python exceptions
+             # Safely get the line number if possible for the error report
+             err_line = line_num
+             print(f"Unexpected error processing statement near line {err_line}: {e}", file=sys.stderr)
+             # Print a traceback for debugging unexpected errors
+             import traceback
+             traceback.print_exc(file=sys.stderr)
+             # Advance at least one token if the position didn't change to prevent infinite loops
+             if self.current_pos == start_pos: self._skip_token()
+             # Return a C comment indicating the unexpected error
+             return f"// UNEXPECTED TRANSPILER ERROR: {type(e).__name__}: {e}"
 
 
     # --- Token-Based Specific Statement Processors ---
@@ -920,212 +995,355 @@ class ConsoTranspilerTokenBased:
 
     def _process_input_from_tokens(self):
         """
-        Processes an input statement (var = npt("prompt");) by generating
-        C code. Handles single variables and arrays based on type.
-        MODIFIED to handle strng[] input with strtok_r and strdup.
-        MODIFIED to add return 1 on invalid input validation for all types.
+        Processes an input statement (target = npt("prompt");) by generating
+        C code. Handles single variables, array elements, struct members,
+        and array shortcut input.
+
+        This function parses the left-hand side (LHS) of the
+        assignment to correctly identify the target (simple variable,
+        array index, struct member) and generate appropriate C input code.
+        It distinguishes the array shortcut input (e.g., `arr = npt(...)`)
+        which implies multiple values, from single-value assignments.
+        Includes fix for string target C code generation structure.
         """
         start_pos = self.current_pos
-        line_num = '?'; var_name = '<unknown>' # For error reporting
+        line_num = '?'
+        target_tokens = [] # Tokens for the LHS (the target variable/member/element)
 
         try:
-            # 1. Consume Tokens: id = npt ( "prompt" ) ;
-            _, var_name, token_full = self._consume('id')
-            line_num = self._get_token_info(token_full)[2]
-            self._consume('=')
-            self._consume('npt')
-            self._consume('(')
+            # 1. Consume the target tokens (LHS) until '='
+            # This loop collects all tokens on the LHS, handling nested parentheses/brackets
+            paren_level = 0
+            bracket_level = 0
+            # Consume tokens until we see '=' at the top level (outside any parens/brackets)
+            while self._peek() != '=' or paren_level > 0 or bracket_level > 0:
+                 if self._peek() is None:
+                      raise TranspilerError("Unexpected end of token stream in input statement target", line_num)
+
+                 # Consume the next token
+                 tok_type, tok_val, token_full = self._consume()
+                 # Update line number from the consumed token
+                 line_num = self._get_token_info(token_full)[2]
+
+                 # Track parenthesis and bracket levels
+                 if tok_type == '(': paren_level += 1
+                 elif tok_type == ')': paren_level -= 1
+                 elif tok_type == '[': bracket_level += 1
+                 elif tok_type == ']': bracket_level -= 1
+
+                 # Add the consumed token (type and value) to the target tokens list
+                 target_tokens.append((tok_type, tok_val))
+
+            # Ensure we actually consumed some tokens for the target
+            if not target_tokens:
+                 raise TranspilerError("Missing target for input statement", line_num)
+
+            # Convert target tokens into a C expression string.
+            # This string will be used directly in the scanf/assignment C code.
+            target_c_expression = self._tokens_to_c_expression(target_tokens)
+
+            # 2. Consume '=' and the npt(...) call
+            self._consume('=') # Consume the '=' token
+            self._consume('npt') # Consume the 'npt' keyword
+            self._consume('(') # Consume the opening parenthesis of the npt call
+
+            # Consume the prompt string literal inside npt()
             prompt_text = ""
             if self._peek() == 'strnglit':
                 _, prompt_text, _ = self._consume('strnglit')
+            # Escape the prompt text for use in a C string literal (e.g., for printf)
             c_prompt = prompt_text.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-            self._consume(')')
-            self._consume(';')
+
+            self._consume(')') # Consume the closing parenthesis of the npt call
+            self._consume(';') # Consume the semicolon ending the statement
+
+            # 3. Analyze Target Tokens to Determine Handling Method (Array Shortcut vs Single Value)
+            is_array_shortcut = False
+            array_type = None
+            array_size_value = 0
+
+            # Check if the target is a single identifier and that identifier is an array
+            if len(target_tokens) == 1 and target_tokens[0][0] == 'id':
+                var_name = target_tokens[0][1]
+                # Look up the variable in the symbol table (current scope)
+                symbol = self.symbol_table.lookup(var_name)
+
+                # Check if the symbol exists and is marked as an array
+                if symbol and getattr(symbol, 'is_array', False):
+                    is_array_shortcut = True
+                    # Retrieve array details needed for processing multiple inputs
+                    array_type = getattr(symbol, 'data_type', None)
+                    array_sizes_attr = getattr(symbol, 'array_sizes', None)
+
+                    # Get the size of the first dimension for the loop
+                    if isinstance(array_sizes_attr, list) and len(array_sizes_attr) > 0:
+                         try:
+                              # Attempt to convert the first dimension size to an integer
+                              array_size_value = int(array_sizes_attr[0])
+                         except (ValueError, TypeError):
+                              # Handle cases where the size is not a simple integer literal
+                              # (e.g., defined by a variable, which is not supported for input loops here)
+                              raise TranspilerError(f"Array size for '{var_name}' must be a positive integer literal for shortcut input (found: {array_sizes_attr[0]})", line_num)
+                    else:
+                         # Handle cases where array_sizes attribute is missing or invalid
+                         raise TranspilerError(f"Could not determine valid size for array '{var_name}' from 'array_sizes': {repr(array_sizes_attr)}", line_num)
+
+                    # Ensure the array size is positive
+                    if array_size_value <= 0:
+                         raise TranspilerError(f"Array size must be positive for shortcut input '{var_name}' (found: {array_size_value})", line_num)
+
+                    # Ensure the array type is supported for shortcut input
+                    if array_type not in ['chr', 'strng', 'nt', 'dbl', 'bln']:
+                         raise TranspilerError(f"Array shortcut input ('npt') not supported for array type '{array_type}' of variable '{var_name}'", line_num)
 
 
-            # 2. Look Up Symbol & Get Info (using correct attribute 'array_sizes')
-            symbol = self.symbol_table.lookup(var_name) # Using current scope's table
-
-            if not symbol:
-                 raise TranspilerError(f"Variable '{var_name}' not found in symbol table for input", line_num)
-
-            var_type = getattr(symbol, 'data_type', None)
-            is_array = getattr(symbol, 'is_array', False)
-            array_size_value = 0 # Default
-
-            if var_type is None:
-                 raise TranspilerError(f"Could not determine type for variable '{var_name}' during input processing", line_num)
-
-            if is_array:
-                array_sizes_attr = getattr(symbol, 'array_sizes', None)
-                if isinstance(array_sizes_attr, list) and len(array_sizes_attr) > 0:
-                    try:
-                        array_size_value = int(array_sizes_attr[0])
-                    except (ValueError, TypeError):
-                         if isinstance(array_sizes_attr[0], str):
-                              raise TranspilerError(f"Array size for '{var_name}' is defined by variable '{array_sizes_attr[0]}'. Cannot use for input loop.", line_num)
-                         else:
-                              raise TranspilerError(f"Invalid array size format '{array_sizes_attr[0]}' for '{var_name}'", line_num)
-                else:
-                    raise TranspilerError(f"Could not determine valid size for array '{var_name}' from 'array_sizes': {repr(array_sizes_attr)}", line_num)
-
-                if array_size_value <= 0:
-                    raise TranspilerError(f"Array size must be positive for input '{var_name}' (found: {array_size_value})", line_num)
-
-
-            # 3. Generate C Code
+            # 4. Generate C Code based on Handling Method (Array Shortcut vs Single Value)
             c_input_code = []
-            c_input_code.append(f'printf("{c_prompt}"); fflush(stdout);') # Prompt
+            # Print the prompt before reading input
+            c_input_code.append(f'printf("{c_prompt}"); fflush(stdout);')
 
+            # Define the fixed size buffer name and size (assuming it's declared in the scope)
             fixed_buffer_name = "conso_input_buffer"
-            buffer_size = 1024
+            buffer_size = 1024 # This size should match the buffer declaration
 
-            if is_array:
-                # --- ARRAY INPUT ---
-                if var_type == 'chr':
-                    # ... (same as before: scanf with width specifier) ...
+            if is_array_shortcut:
+                # --- ARRAY SHORTCUT INPUT (Multiple values expected, e.g., comma/space separated) ---
+                # This logic is adapted from your original code for handling array shortcut input.
+                # It reads the entire line and then parses it.
+
+                if array_type == 'chr':
+                    # For char arrays, use scanf with a width specifier to read a fixed number of characters
+                    # Note: scanf leaves the newline, so we need to consume it.
                     if array_size_value > 0:
                          c_input_code.append(f'scanf("%{array_size_value - 1}s", {var_name});')
+                         # Consume the rest of the line including the newline
                          c_input_code.append('int c; while ((c = getchar()) != \'\\n\' && c != EOF);')
                     else:
+                         # Handle zero-size char array (cannot use scanf)
                          raise TranspilerError(f"Cannot use scanf for zero-size char array '{var_name}'", line_num)
 
-                elif var_type == 'strng':
-                    # --- MODIFICATION START: Implement strng[] input ---
-                    # Generate code to read line, tokenize, and assign with strdup
+                elif array_type == 'strng':
+                    # For string arrays (strng[]), read the line, then tokenize using strtok_r
+                    # and duplicate each token using strdup.
                     c_input_code.append(f'int items_read_{var_name} = 0;')
-                    # Initialize array elements to NULL first to prevent freeing invalid pointers
+                    # Before assigning new strings, free any existing strings in the array
                     c_input_code.append(f'for (int k_{var_name} = 0; k_{var_name} < {array_size_value}; ++k_{var_name}) {{')
                     c_input_code.append(f'    free({var_name}[k_{var_name}]); // Free existing string if any')
-                    c_input_code.append(f'    {var_name}[k_{var_name}] = NULL;')
+                    c_input_code.append(f'    {var_name}[k_{var_name}] = NULL; // Set pointer to NULL after freeing')
                     c_input_code.append(f'}}')
 
+                    # Read the entire line into the buffer
                     c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                    c_input_code.append(f'    {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0; // Remove newline')
+                    # Remove the trailing newline from the buffer
+                    c_input_code.append(f'    {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
+
+                    # Tokenize the buffer using space and tab as delimiters
                     c_input_code.append(f'    char *token_{var_name};')
-                    c_input_code.append(f'    char *saveptr_{var_name}; // For strtok_r')
-                    c_input_code.append(f'    char *str_ptr_{var_name} = {fixed_buffer_name}; // Ptr to current position in buffer')
-                    # Loop to tokenize and assign
+                    c_input_code.append(f'    char *saveptr_{var_name}; // Pointer for strtok_r to maintain state')
+                    c_input_code.append(f'    char *str_ptr_{var_name} = {fixed_buffer_name}; // Pointer to the current position in the buffer')
+
+                    # Loop through the array size, tokenizing and assigning
                     c_input_code.append(f'    for (items_read_{var_name} = 0; items_read_{var_name} < {array_size_value}; ++items_read_{var_name}, str_ptr_{var_name} = NULL) {{')
-                    # Use strtok_r: tokenizes based on space and tab delimiters
+                    # Get the next token (using strtok_r for thread safety/re-entrancy)
                     c_input_code.append(f'        token_{var_name} = strtok_r(str_ptr_{var_name}, " \\t", &saveptr_{var_name});')
+                    # If no more tokens are found, break the loop
                     c_input_code.append(f'        if (token_{var_name} == NULL) {{')
-                    c_input_code.append(f'            break; // No more tokens found')
+                    c_input_code.append(f'            break; // Stop if fewer items were entered than array size')
                     c_input_code.append(f'        }}')
-                    # Assign duplicated token to array element
-                    c_input_code.append(f'        // {var_name}[items_read_{var_name}] is already NULL or freed')
+                    # Duplicate the token string and assign the new pointer to the array element
+                    c_input_code.append(f'        // {var_name}[items_read_{var_name}] was freed or is NULL')
                     c_input_code.append(f'        {var_name}[items_read_{var_name}] = strdup(token_{var_name});')
-                    # Check for allocation failure
+                    # Check if strdup failed (memory allocation error)
                     c_input_code.append(f'        if ({var_name}[items_read_{var_name}] == NULL) {{')
-                    c_input_code.append(f'            fprintf(stderr, "Memory allocation failed for string input.\\n");')
-                    c_input_code.append(f'            // Optionally: Add code here to free strings allocated so far in this loop')
-                    c_input_code.append(f'            break;')
+                    c_input_code.append(f'            fprintf(stderr, "Memory allocation failed for string array input.\\n");')
+                    # Optionally: Add code here to free strings allocated so far in this loop on error
+                    c_input_code.append(f'            return 1; // Indicate failure')
                     c_input_code.append(f'        }}')
                     c_input_code.append(f'    }}') # End for loop
-                    c_input_code.append(f'}} else {{')
-                    c_input_code.append(f'    /* Handle fgets error or EOF for {var_name} */')
-                    c_input_code.append(f'}}')
-                    # --- MODIFICATION END ---
 
-                elif var_type in ['nt', 'dbl', 'bln']:
-                    # ... (same as before: fgets + sscanf loop) ...
-                    c_input_code.append(f'int items_read_{var_name} = 0;')
-                    c_input_code.append(f'char* parse_ptr_{var_name};')
-                    c_input_code.append(f'int offset_{var_name};')
-                    c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                    c_input_code.append(f'    {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
-                    c_input_code.append(f'    parse_ptr_{var_name} = {fixed_buffer_name};')
-                    sscanf_fmt = ""; temp_var_decl = ""; assign_logic = f"{var_name}[items_read_{var_name}]"
-                    if var_type == 'nt':   sscanf_fmt = "%d%n"
-                    elif var_type == 'dbl':  sscanf_fmt = "%lf%n"
-                    elif var_type == 'bln':
-                        sscanf_fmt = "%d%n"; temp_var_decl = f"int temp_bln_{var_name};"; assign_logic = f"temp_bln_{var_name}"
-                    if temp_var_decl: c_input_code.append(f'    {temp_var_decl}')
-                    c_input_code.append(f'    for (items_read_{var_name} = 0; items_read_{var_name} < {array_size_value}; ++items_read_{var_name}) {{')
-                    c_input_code.append(f'        if (sscanf(parse_ptr_{var_name}, "{sscanf_fmt}", &{assign_logic}, &offset_{var_name}) == 1) {{')
-                    if var_type == 'bln': c_input_code.append(f'            {var_name}[items_read_{var_name}] = (temp_bln_{var_name} != 0);')
-                    c_input_code.append(f'            parse_ptr_{var_name} += offset_{var_name};')
-                    c_input_code.append(f'        }} else {{ break; }}')
-                    c_input_code.append(f'    }}')
+                    # Handle the case where fgets failed
                     c_input_code.append(f'}} else {{ /* Handle fgets error */ items_read_{var_name} = 0; }}')
 
-                else:
-                    raise TranspilerError(f"Array input ('npt') not supported for type '{var_type}'", line_num)
-            # --- END ARRAY INPUT ---
+
+                elif array_type in ['nt', 'dbl', 'bln']:
+                    # For numeric and boolean arrays, read the line, then parse values using sscanf in a loop
+                    c_input_code.append(f'int items_read_{var_name} = 0;')
+                    c_input_code.append(f'char* parse_ptr_{var_name}; // Pointer to the current parsing position in the buffer')
+                    c_input_code.append(f'int offset_{var_name}; // To store the number of characters consumed by sscanf')
+
+                    # Read the entire line into the buffer
+                    c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
+                    # Remove the trailing newline
+                    c_input_code.append(f'    {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
+                    c_input_code.append(f'    parse_ptr_{var_name} = {fixed_buffer_name}; // Start parsing from the beginning of the buffer')
+
+                    # Determine the sscanf format specifier and assignment logic based on array element type
+                    sscanf_fmt = ""; temp_var_decl = ""; assign_logic = f"{var_name}[items_read_{var_name}]"
+                    if array_type == 'nt':   sscanf_fmt = "%d%n" # %n captures characters consumed
+                    elif array_type == 'dbl':  sscanf_fmt = "%lf%n" # %lf for double
+                    elif array_type == 'bln':
+                        # Read boolean as int first, then convert
+                        sscanf_fmt = "%d%n"; temp_var_decl = f"int temp_bln_{var_name};"; assign_logic = f"temp_bln_{var_name}"
+
+                    # Declare a temporary variable if needed for boolean conversion
+                    if temp_var_decl: c_input_code.append(f'    {temp_var_decl}')
+
+                    # Loop to read multiple values using sscanf
+                    c_input_code.append(f'    for (items_read_{var_name} = 0; items_read_{var_name} < {array_size_value}; ++items_read_{var_name}) {{')
+                    # Attempt to scan the next value from the current parse_ptr position
+                    c_input_code.append(f'        if (sscanf(parse_ptr_{var_name}, "{sscanf_fmt}", &{assign_logic}, &offset_{var_name}) == 1) {{')
+                    # If scanning was successful:
+                    if array_type == 'bln':
+                        # Convert the temporary int to boolean (0 or non-zero)
+                        c_input_code.append(f'            {var_name}[items_read_{var_name}] = (temp_bln_{var_name} != 0);')
+                    # Advance the parse pointer by the number of characters consumed
+                    c_input_code.append(f'            parse_ptr_{var_name} += offset_{var_name};')
+                    # Skip any whitespace after the number
+                    c_input_code.append(f'            while (*parse_ptr_{var_name} == \' \' || *parse_ptr_{var_name} == \'\\t\') parse_ptr_{var_name}++;')
+                    # Check if the next character is a comma (if not the last item)
+                    c_input_code.append(f'            if (items_read_{var_name} < {array_size_value} - 1 && *parse_ptr_{var_name} == \',\') {{ parse_ptr_{var_name}++; }}')
+                    # Skip any whitespace after the comma
+                    c_input_code.append(f'            while (*parse_ptr_{var_name} == \' \' || *parse_ptr_{var_name} == \'\\t\') parse_ptr_{var_name}++;')
+                    c_input_code.append(f'        }} else {{')
+                    # If sscanf failed, stop reading values
+                    c_input_code.append(f'            break; // Stop if input doesn\'t match format or fewer items were entered')
+                    c_input_code.append(f'        }}')
+                    c_input_code.append(f'    }}') # End for loop
+
+                    # Handle the case where fgets failed
+                    c_input_code.append(f'}} else {{ /* Handle fgets error */ items_read_{var_name} = 0; }}')
+
+                # No explicit 'return 1' on invalid input for array shortcut,
+                # as it reads as many as possible. Error messages printed by sscanf/fprintf.
 
             else:
-                # --- SINGLE VARIABLE INPUT ---
-                if var_type == 'strng':
-                    c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                    c_input_code.append(f'    {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
-                    c_input_code.append(f'    /* Assuming {var_name} is char*. Using strdup. */')
-                    c_input_code.append(f'    free({var_name});')
-                    c_input_code.append(f'    {var_name} = strdup({fixed_buffer_name});')
-                    c_input_code.append(f'}} else {{ free({var_name}); {var_name} = NULL; }}')
-                elif var_type == 'nt':
-                    c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                    c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%d", &{var_name}) != 1) {{')
-                    c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid integer input for {var_name}.\\n");')
-                    c_input_code.append(f'        {var_name} = {self.default_values.get("nt", "0")};')
-                    c_input_code.append(f'        return 1; // Exit function on invalid input')
+                # --- SINGLE VALUE INPUT (Simple var, array element like arr[0], struct member like person.age) ---
+                # Determine the final type of the target expression (e.g., nt for arr[0], dbl for person.age)
+                # This uses the helper function that analyzes the target tokens.
+                target_type = self.get_expression_type(target_tokens)
+
+                if target_type is None:
+                     # This indicates an issue in get_expression_type or an unsupported target expression
+                     raise TranspilerError(f"Could not determine type of input target '{target_c_expression}'", line_num)
+
+                # Read the input line into the buffer
+                c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
+                # Remove the trailing newline character from the buffer
+                c_input_code.append(f'    {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
+
+                # Generate C code to parse the input based on the target type
+                if target_type == 'strng':
+                     # Handle char* targets (simple var, array element strng[], struct member char*)
+                     # Use strdup to allocate memory and copy the string from the buffer
+                     # Need to free any previously allocated string memory first
+                     c_input_code.append(f'    free({target_c_expression}); // Free existing string if any')
+                     c_input_code.append(f'    {target_c_expression} = strdup({fixed_buffer_name});')
+                     # Check if strdup failed (memory allocation error)
+                     c_input_code.append(f'    if ({target_c_expression} == NULL) {{')
+                     c_input_code.append(f'        fprintf(stderr, "Memory allocation failed for string input.\\n");')
+                     c_input_code.append(f'        return 1; // Indicate failure and exit the current function')
+                     c_input_code.append(f'    }}')
+                     # Add the closing brace for the fgets if block
+                     c_input_code.append(f'}} else {{ /* Handle fgets error or EOF */ free({target_c_expression}); {target_c_expression} = NULL; }}') # Corrected else block and closing brace
+
+                elif target_type == 'chr' and '[' in target_c_expression:
+                     # Handle char array targets (e.g., char_array[index] or struct member char array)
+                     # Use strncpy to copy the string from the buffer to the char array element/member
+                     # This requires knowing the size of the destination char array.
+                     # A robust solution would look up the symbol for the target and get its size.
+                     # For simplicity here, we'll use sizeof() on the target expression, which works
+                     # if the target is a char array element or a struct member char array.
+                     c_input_code.append(f'    // Assuming {target_c_expression} is a char array element or struct member char array')
+                     c_input_code.append(f'    strncpy({target_c_expression}, {fixed_buffer_name}, sizeof({target_c_expression}) - 1);')
+                     # Ensure null termination in case the input string is longer than the array capacity
+                     c_input_code.append(f'    {target_c_expression}[sizeof({target_c_expression}) - 1] = \'\\0\'; // Ensure null termination')
+                     # Add the closing brace for the fgets if block
+                     c_input_code.append(f'}} else {{ /* Handle fgets error or EOF */ {target_c_expression}[0] = \'\\0\'; }}') # Added else block and closing brace
+
+                elif target_type == 'nt':
+                    # Use sscanf to parse an integer from the buffer and assign to the target
+                    c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%d", &({target_c_expression})) != 1) {{')
+                    # If sscanf fails (input is not a valid integer)
+                    c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid integer input for {target_c_expression}.\\n");')
+                    c_input_code.append(f'        return 1; // Indicate failure and exit the current function')
                     c_input_code.append(f'    }}')
-                    c_input_code.append(f'}} else {{ {var_name} = {self.default_values.get("nt", "0")}; }}')
-                elif var_type == 'dbl':
-                     c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                     c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%lf", &{var_name}) != 1) {{')
-                     c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid double input for {var_name}.\\n");')
-                     c_input_code.append(f'        {var_name} = {self.default_values.get("dbl", "0.0")};')
-                     c_input_code.append(f'        return 1; // Exit function on invalid input')
+                    # Add the closing brace for the fgets if block
+                    c_input_code.append(f'}} else {{ /* Handle fgets error or EOF */ }}') # Added else block and closing brace
+
+                elif target_type == 'dbl':
+                     # Use sscanf to parse a double from the buffer and assign to the target
+                     c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%lf", &({target_c_expression})) != 1) {{')
+                     # If sscanf fails (input is not a valid double)
+                     c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid double input for {target_c_expression}.\\n");')
+                     c_input_code.append(f'        return 1; // Indicate failure and exit the current function')
                      c_input_code.append(f'    }}')
-                     c_input_code.append(f'}} else {{ {var_name} = {self.default_values.get("dbl", "0.0")}; }}')
-                elif var_type == 'chr':
-                     c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
+                     # Add the closing brace for the fgets if block
+                     c_input_code.append(f'}} else {{ /* Handle fgets error or EOF */ }}') # Added else block and closing brace
+
+                elif target_type == 'chr':
+                     # Handle single character input: take the first character of the buffer
                      c_input_code.append(f'    if ({fixed_buffer_name}[0] != \'\\n\' && {fixed_buffer_name}[0] != \'\\0\') {{')
-                     c_input_code.append(f'        {var_name} = {fixed_buffer_name}[0];')
+                     c_input_code.append(f'        {target_c_expression} = {fixed_buffer_name}[0];')
                      c_input_code.append(f'    }} else {{')
-                     c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid character input for {var_name}.\\n");')
-                     c_input_code.append(f'        {var_name} = {self.default_values.get("chr", "\'\\\\0\'")};')
-                     c_input_code.append(f'        return 1; // Exit function on invalid input')
+                     # If the buffer is empty or only contains a newline
+                     c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid character input for {target_c_expression}.\\n");')
+                     c_input_code.append(f'        return 1; // Indicate failure and exit the current function')
                      c_input_code.append(f'    }}')
-                     c_input_code.append(f'}} else {{ {var_name} = {self.default_values.get("chr", "\'\\\\0\'")}; }}')
-                elif var_type == 'bln':
-                     c_input_code.append(f'int temp_bln_input_{var_name};')
-                     c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
-                     c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%d", &temp_bln_input_{var_name}) == 1) {{')
-                     c_input_code.append(f'        {var_name} = (temp_bln_input_{var_name} != 0);')
+                     # Add the closing brace for the fgets if block
+                     c_input_code.append(f'}} else {{ /* Handle fgets error or EOF */ }}') # Added else block and closing brace
+
+                elif target_type == 'bln':
+                     # Handle boolean input: accept 0, 1, "tr", or "fls"
+                     c_input_code.append(f'    int temp_bln_input;') # Temporary variable to read integer boolean
+                     c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%d", &temp_bln_input) == 1) {{')
+                     # If an integer (0 or 1) was successfully scanned, assign the boolean value
+                     c_input_code.append(f'        {target_c_expression} = (temp_bln_input != 0);')
                      c_input_code.append(f'    }} else {{')
-                     c_input_code.append(f'        {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
-                     c_input_code.append(f'        if (strcmp({fixed_buffer_name}, "tr") == 0) {{ {var_name} = 1; }}')
-                     c_input_code.append(f'        else if (strcmp({fixed_buffer_name}, "fls") == 0) {{ {var_name} = 0; }}')
+                     # If integer scan failed, check if the input string is "tr" or "fls"
+                     c_input_code.append(f'        if (strcmp({fixed_buffer_name}, "tr") == 0) {{ {target_c_expression} = 1; }}')
+                     c_input_code.append(f'        else if (strcmp({fixed_buffer_name}, "fls") == 0) {{ {target_c_expression} = 0; }}')
                      c_input_code.append(f'        else {{')
-                     c_input_code.append(f'            fprintf(stderr, "\\nError: Invalid boolean input for {var_name} (expected 0, 1, tr, or fls).\\n");')
-                     c_input_code.append(f'            {var_name} = {self.default_values.get("bln", "0")};')
-                     c_input_code.append(f'            return 1; // Exit function on invalid input')
+                     # If none of the expected formats match
+                     c_input_code.append(f'            fprintf(stderr, "\\nError: Invalid boolean input for {target_c_expression} (expected 0, 1, tr, or fls).\\n");')
+                     c_input_code.append(f'            return 1; // Indicate failure and exit the current function')
                      c_input_code.append(f'        }}')
                      c_input_code.append(f'    }}')
-                     c_input_code.append(f'}} else {{ {var_name} = {self.default_values.get("bln", "0")}; }}')
-                else:
-                    raise TranspilerError(f"Input ('npt') not supported for single variable type '{var_type}'", line_num)
-            # --- END SINGLE VARIABLE ---
+                     # Add the closing brace for the fgets if block
+                     c_input_code.append(f'}} else {{ /* Handle fgets error or EOF */ }}') # Added else block and closing brace
 
-            # Join the generated C lines
+                else:
+                    # This case should not be reached if get_expression_type is comprehensive
+                    raise TranspilerError(f"Input ('npt') not supported for target type '{target_type}'", line_num)
+
+
+            # Join all the generated C lines
             return "\n".join(c_input_code)
 
         # --- Error Handling (Keep existing blocks) ---
         except TranspilerError as e:
-            print(f"Error processing input statement for '{var_name}' near line {e.line_num if e.line_num else line_num}: {e.message}", file=sys.stderr)
+            # Print the custom transpiler error message
+            print(f"Error processing input statement near line {e.line_num if e.line_num else line_num}: {e.message}", file=sys.stderr)
+            # Attempt to reset the token position to the start of the statement for recovery
             self.current_pos = start_pos
+            # Skip tokens until a potential statement boundary (semicolon, brace) to avoid infinite loops
             while self._peek() not in [';', '}', '{', None] and self.current_pos < len(self.tokens):
                 self._skip_token()
+            # Consume the boundary token if it's a semicolon
             if self._peek() == ';': self._skip_token()
+            # Return a C comment indicating the error
             return f"// TRANSPILER ERROR (Input): {e.message}"
         except Exception as e:
+            # Handle any unexpected Python exceptions during processing
+            # Safely get the line number if possible for the error report
             err_line = line_num
-            print(f"Unexpected error processing input for '{var_name}' near line {err_line}: {e}", file=sys.stderr)
+            print(f"Unexpected error processing input for '{target_c_expression if 'target_c_expression' in locals() else 'unknown target'}' near line {err_line}: {e}", file=sys.stderr)
+            # Print a traceback for debugging unexpected errors
             import traceback
-            traceback.print_exc()
+            traceback.print_exc(file=sys.stderr)
+            # Advance at least one token if the position didn't change to prevent infinite loops
             if self.current_pos == start_pos: self._skip_token()
-            return f"// UNEXPECTED TRANSPILER ERROR (Input): {e}"
+            # Return a C comment indicating the unexpected error
+            return f"// UNEXPECTED TRANSPILER ERROR (Input): {type(e).__name__}: {e}"
         
     def _process_return_from_tokens(self):
         self._consume('rtrn')
@@ -1214,92 +1432,111 @@ class ConsoTranspilerTokenBased:
         # --- Helper Methods for Expression Processing (with Debugging) ---
 
     def format_token(self, tok_type, tok_val):
-        """Formats a single token into its C string representation."""
-        if tok_type == 'blnlit': return self.bool_mapping.get(tok_val, '0')
-        elif tok_type == 'strnglit': return f'"{tok_val}"'
-        elif tok_type == 'chrlit': return f"'{tok_val}'"
-        else: return str(tok_val)
+        """
+        Formats a single token into its C string representation.
+        Handles special cases for literals like strings, chars, and booleans.
+        """
+        if tok_type == 'blnlit':
+             # Map boolean literals 'tr' and 'fls' to '1' and '0'
+             return self.bool_mapping.get(tok_val, '0')
+        elif tok_type == 'strnglit':
+             # Enclose string literals in double quotes
+             return f'"{tok_val}"'
+        elif tok_type == 'chrlit':
+             # Enclose character literals in single quotes
+             return f"'{tok_val}'"
+        else:
+             # Default case: convert the token value to a string
+             return str(tok_val)
 
     def get_expression_type(self, expr_tokens):
         """
         Determines the resulting C type ('nt', 'dbl', 'strng', 'bln', 'chr', or None)
-        of an expression represented by tokens.
-        Prioritizes operator type over initial operand type.
-        Relies on symbol table lookup.
+        of an expression represented by a list of (type, value) tokens.
+        Prioritizes operator type over initial operand type (e.g., division of ints
+        might result in double in some contexts, though C integer division truncates).
+        Relies on symbol table lookup to determine variable and member types.
+        Handles simple literals, variables, array elements, struct members,
+        function calls, and basic arithmetic/logical/comparison operations.
         """
         # print(f"[DEBUG get_expression_type] Input tokens: {expr_tokens}") # Uncomment for deep debug
         if not expr_tokens:
             # print("[DEBUG get_expression_type] Returning: None (empty tokens)") # Uncomment for deep debug
-            return None
+            return None # Return None for empty expressions
 
-        result_type = None # Initialize result type
+        result_type = None # Initialize the determined result type
 
         # --- Operator-based type determination FIRST ---
-        # Check for comparison or logical operators first, as they dictate the result type (boolean -> int)
+        # Check for comparison or logical operators, as they always result in a boolean (int in C)
         is_comparison_or_logical = any(
             t[0] in ['==', '!=', '<', '>', '<=', '>=', '&&', '||']
             for t in expr_tokens
         )
         if is_comparison_or_logical:
-            result_type = 'bln' # Result is always boolean (represented as int 0 or 1)
-        else:
-            # Check for arithmetic operations -> result type depends on operands
-            has_arithmetic_op = any(t[0] in ['+', '-', '*', '/'] for t in expr_tokens)
-            if has_arithmetic_op:
-                promotes_to_double = False
-                # Iterate through tokens to check operand types
-                i = 0
-                while i < len(expr_tokens):
-                    tok_type, tok_val = expr_tokens[i]
+            result_type = 'bln' # The result of a comparison or logical operation is boolean (true/false)
 
-                    # Check for double literals OR division operator (which often results in double)
-                    if tok_type in ['dbllit', 'NEGDOUBLELIT', '/']:
-                        promotes_to_double = True
-                        break # Found a double source, no need to check further
+        # If not a comparison/logical operation, check for arithmetic operations
+        has_arithmetic_op = any(t[0] in ['+', '-', '*', '/'] for t in expr_tokens)
+        if has_arithmetic_op and result_type is None: # Only check if type hasn't been determined yet
+            promotes_to_double = False
+            # Iterate through tokens to check operand types for potential double promotion
+            i = 0
+            while i < len(expr_tokens):
+                tok_type, tok_val = expr_tokens[i]
 
-                    # Check if an identifier is involved
-                    if tok_type == 'id':
-                        # --- MODIFICATION START: Check for struct access pattern (id . id) ---
-                        # Look ahead for '.' followed by 'id'
-                        if i + 2 < len(expr_tokens) and expr_tokens[i+1][0] == '.' and expr_tokens[i+2][0] == 'id':
-                            struct_var_name = tok_val
-                            member_name = expr_tokens[i+2][1]
-                            # print(f"[DEBUG get_expression_type] Checking struct member: {struct_var_name}.{member_name}") # DEBUG
-                            if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                                struct_var_symbol = self.symbol_table.lookup(struct_var_name)
-                                if struct_var_symbol and hasattr(struct_var_symbol, 'data_type'):
-                                    struct_type_name = struct_var_symbol.data_type
-                                    # Look up the struct definition itself to find member types
-                                    struct_def_symbol = self.symbol_table.lookup(struct_type_name)
-                                    if struct_def_symbol and hasattr(struct_def_symbol, 'members') and hasattr(struct_def_symbol.members, 'get'):
-                                        member_symbol = struct_def_symbol.members.get(member_name)
-                                        # Check if the MEMBER's type is double
-                                        if member_symbol and getattr(member_symbol, 'data_type', None) == 'dbl':
-                                            # print(f"[DEBUG get_expression_type] Struct member {member_name} is dbl.") # DEBUG
-                                            promotes_to_double = True
-                                            break # Found a double source
-                            # Skip the '.' and member 'id' tokens in the next iteration
-                            i += 2
-                        # --- MODIFICATION END ---
-                        else:
-                            # Regular ID lookup (not part of struct access pattern)
-                            # print(f"[DEBUG get_expression_type] Checking identifier: {tok_val}") # DEBUG
-                            if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
-                                symbol = self.symbol_table.lookup(tok_val)
-                                # Check if the IDENTIFIER's type is double
-                                if symbol and getattr(symbol, 'data_type', None) == 'dbl':
-                                    # print(f"[DEBUG get_expression_type] Identifier {tok_val} is dbl.") # DEBUG
-                                    promotes_to_double = True
-                                    break # Found a double source
+                # If we find a double literal or a division operator '/', the result might be double
+                if tok_type in ['dbllit', 'NEGDOUBLELIT', '/']:
+                    promotes_to_double = True
+                    break # Found a source that promotes to double, no need to check further
 
-                    i += 1 # Move to the next token
+                # If an identifier is involved, check its type from the symbol table
+                if tok_type == 'id':
+                    # Check for struct member access pattern (id . id)
+                    if i + 2 < len(expr_tokens) and expr_tokens[i+1][0] == '.' and expr_tokens[i+2][0] == 'id':
+                        struct_var_name = tok_val
+                        member_name = expr_tokens[i+2][1]
+                        # print(f"[DEBUG get_expression_type] Checking struct member: {struct_var_name}.{member_name}") # DEBUG
+                        if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                            # Look up the symbol for the struct variable
+                            struct_var_symbol = self.symbol_table.lookup(struct_var_name)
+                            if struct_var_symbol and hasattr(struct_var_symbol, 'data_type'):
+                                struct_type_name = struct_var_symbol.data_type # Get the name of the struct type
+                                # Look up the symbol for the struct definition itself
+                                struct_def_symbol = self.symbol_table.lookup(struct_type_name)
+                                # Check if the struct definition symbol exists and has members
+                                if struct_def_symbol and hasattr(struct_def_symbol, 'members') and hasattr(struct_def_symbol.members, 'get'):
+                                    # Get the symbol for the specific member
+                                    member_symbol = struct_def_symbol.members.get(member_name)
+                                    # Check if the MEMBER's data type is 'dbl'
+                                    if member_symbol and getattr(member_symbol, 'data_type', None) == 'dbl':
+                                        # print(f"[DEBUG get_expression_type] Struct member {member_name} is dbl.") # DEBUG
+                                        promotes_to_double = True
+                                        break # Found a double source, stop checking
 
-                # Assign result type based on whether promotion occurred
-                result_type = 'dbl' if promotes_to_double else 'nt'
+                        # Skip the '.' and member 'id' tokens in the next iteration since they are part of this access
+                        i += 2
+                    else:
+                        # Regular ID lookup (not part of struct access pattern)
+                        # print(f"[DEBUG get_expression_type] Checking identifier: {tok_val}") # DEBUG
+                        if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                            # Look up the symbol for the identifier
+                            symbol = self.symbol_table.lookup(tok_val)
+                            # Check if the IDENTIFIER's data type is 'dbl'
+                            if symbol and getattr(symbol, 'data_type', None) == 'dbl':
+                                # print(f"[DEBUG get_expression_type] Identifier {tok_val} is dbl.") # DEBUG
+                                promotes_to_double = True
+                                break # Found a double source, stop checking
 
-        # --- If no operators determined the type, check structure (single token, array access, etc.) ---
+                i += 1 # Move to the next token
+
+            # Assign the result type based on whether any double source was found
+            result_type = 'dbl' if promotes_to_double else 'nt'
+
+
+        # --- If no operators determined the type, check the structure of the expression ---
+        # This handles cases like single literals, variables, array elements, struct members, function calls.
         if result_type is None:
-             # Check simple cases first: single literal or variable
+             # Check simple cases first: a single literal or a single variable identifier
              if len(expr_tokens) == 1:
                  tok_type, tok_val = expr_tokens[0]
                  if tok_type == 'strnglit': result_type = 'strng'
@@ -1308,131 +1545,212 @@ class ConsoTranspilerTokenBased:
                  elif tok_type in ['ntlit', 'NEGINTLIT']: result_type = 'nt'
                  elif tok_type == 'blnlit': result_type = 'bln'
                  elif tok_type == 'id':
+                     # Look up the identifier in the symbol table
                      if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
                          symbol = self.symbol_table.lookup(tok_val)
+                         # The type of a single variable is its data type from the symbol table
                          result_type = getattr(symbol, 'data_type', None) if symbol else None
              # Check complex structures - Array Element Access (e.g., arr[index])
+             # Pattern: Starts with 'id', contains '[', ends with ']'
              elif len(expr_tokens) >= 3 and expr_tokens[0][0] == 'id' and expr_tokens[1][0] == '[' and expr_tokens[-1][0] == ']':
                  base_var_name = expr_tokens[0][1]
+                 # Look up the base array variable in the symbol table
                  if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
                      symbol = self.symbol_table.lookup(base_var_name)
-                     # Type of an array element is the base type of the array
+                     # The type of an array element is the base data type of the array
                      result_type = getattr(symbol, 'data_type', None) if symbol else None
              # Check complex structures - Struct Member Access (e.g., struct.member)
+             # Pattern: Ends with 'id', preceded by '.', preceded by something (often 'id')
+             # This heuristic assumes simple id.id access. More complex chains might need recursive analysis.
              elif len(expr_tokens) >= 3 and expr_tokens[-1][0] == 'id' and expr_tokens[-2][0] == '.':
-                 # This heuristic assumes simple id.id access. More complex chains might need recursion.
-                 if len(expr_tokens) == 3 and expr_tokens[0][0] == 'id': # Simple id.id
+                 # Assuming a simple `id.id` structure for now
+                 if len(expr_tokens) == 3 and expr_tokens[0][0] == 'id':
                      struct_var_name = expr_tokens[0][1]
                      member_name = expr_tokens[-1][1]
                      if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
+                         # Look up the symbol for the struct variable
                          struct_var_symbol = self.symbol_table.lookup(struct_var_name)
                          if struct_var_symbol and hasattr(struct_var_symbol, 'data_type'):
-                             struct_type_name = struct_var_symbol.data_type
+                             struct_type_name = struct_var_symbol.data_type # Get the name of the struct type
+                             # Look up the symbol for the struct definition itself
                              struct_def_symbol = self.symbol_table.lookup(struct_type_name)
+                             # Check if the struct definition symbol exists and has members
                              if struct_def_symbol and hasattr(struct_def_symbol, 'members') and hasattr(struct_def_symbol.members, 'get'):
+                                 # Get the symbol for the specific member
                                  member_symbol = struct_def_symbol.members.get(member_name)
+                                 # The type of a struct member is its data type from the struct definition
                                  if member_symbol: result_type = getattr(member_symbol, 'data_type', None)
              # Check complex structures - Function Call (e.g., func(args))
+             # Pattern: Starts with 'id', followed by '(', ends with ')'
              elif len(expr_tokens) >= 3 and expr_tokens[0][0] == 'id' and expr_tokens[1][0] == '(' and expr_tokens[-1][0] == ')':
                  func_name = expr_tokens[0][1]
+                 # Look up the function symbol in the symbol table
                  if self.symbol_table and hasattr(self.symbol_table, 'lookup'):
                      symbol = self.symbol_table.lookup(func_name)
-                     # Type of a function call is its return type
+                     # The type of a function call expression is the function's return type
                      result_type = getattr(symbol, 'data_type', None) if symbol else None
 
         # print(f"[DEBUG get_expression_type] Returning type: {result_type}") # Uncomment for deep debug
         return result_type
 
     def _format_token_sequence(self, tokens_to_format):
-        """Helper to format a sequence of tokens into C code with spacing."""
+        """
+        Helper to format a sequence of tokens into C code with basic spacing rules.
+        Attempts to add spaces between tokens where appropriate (e.g., between
+        identifiers and operators) but not around punctuation like '.', '(', '[', etc.
+        """
         parts = []
         if not tokens_to_format: return ""
+
         for i, (tok_type, tok_val) in enumerate(tokens_to_format):
              needs_space = False
+             # Check if a space is needed before the current token
              if parts:
-                 last_part = parts[-1]
-                 if tok_type not in [')', ']', '.', ';', ',', '(', '[', '++', '--'] and \
-                    not last_part.endswith(('(', '[', '.')) and \
-                    tok_type != '.':
-                      if not ((last_part.isalnum() or last_part.endswith((')', ']'))) and tok_type in ['(', '[']):
-                           if not (tok_type in ['++', '--'] and last_part.isalnum()):
-                                needs_space = True
+                 last_part = parts[-1] # Get the last part added to the result
+
+                 # Add a space if the current token is not punctuation that attaches to the previous token
+                 # and the last part is not punctuation that attaches to the current token.
+                 # Avoid space before ')', ']', '.', ';', ','
+                 if tok_type not in [')', ']', '.', ';', ',']:
+                      # Avoid space after '(', '[', '.'
+                      if not last_part.endswith(('(', '[', '.')):
+                           # Avoid space between alphanumeric/closing-paren/bracket and opening-paren/bracket (function calls, array access)
+                           if not ((last_part.isalnum() or last_part.endswith((')', ']'))) and tok_type in ['(', '[']):
+                                # Avoid space before '++' or '--' if preceded by alphanumeric
+                                if not (tok_type in ['++', '--'] and last_part.isalnum()):
+                                     # In most other cases, add a space
+                                     needs_space = True
+
+             # Add a space if needed
              if needs_space: parts.append(" ")
+
+             # Add the formatted token value
              parts.append(self.format_token(tok_type, tok_val))
+
+        # Join all parts into a single string
         return "".join(parts)
 
     def _process_comparison_segment(self, segment_tokens):
         """
         Processes a segment of tokens (typically between logical operators)
         to handle comparisons, especially string comparisons using strcmp.
+        Finds the first top-level comparison operator and splits the segment.
         """
         if not segment_tokens: return ""
+
         comparison_index = -1
         paren_level = 0
         bracket_level = 0
-        comparison_ops = ['==', '!=', '<', '>', '<=', '>=']
+        comparison_ops = ['==', '!=', '<', '>', '<=', '>='] # List of comparison operators
+
+        # Iterate through the tokens to find a top-level comparison operator
         for idx, (tok_type, _) in enumerate(segment_tokens):
             if tok_type == '(': paren_level += 1
             elif tok_type == ')': paren_level -= 1
             elif tok_type == '[': bracket_level += 1
             elif tok_type == ']': bracket_level -= 1
+            # If the token is a comparison operator and we are at the top level (outside parens/brackets)
             elif paren_level == 0 and bracket_level == 0 and tok_type in comparison_ops:
-                comparison_index = idx
-                break
+                comparison_index = idx # Found the operator
+                break # Stop at the first top-level comparison operator
+
+        # If a comparison operator was found
         if comparison_index != -1:
-            op_tok_type = segment_tokens[comparison_index][0]
-            left_operand_tokens = segment_tokens[:comparison_index]
-            right_operand_tokens = segment_tokens[comparison_index + 1:]
+            op_tok_type = segment_tokens[comparison_index][0] # Get the type of the operator
+            left_operand_tokens = segment_tokens[:comparison_index] # Tokens before the operator
+            right_operand_tokens = segment_tokens[comparison_index + 1:] # Tokens after the operator
+
+            # Determine the types of the left and right operands
             left_type = self.get_expression_type(left_operand_tokens)
             right_type = self.get_expression_type(right_operand_tokens)
+
+            # If both operands are strings and the operator is == or !=, use strcmp
             if left_type == 'strng' and right_type == 'strng' and op_tok_type in ['==', '!=']:
+                # Convert operands to C expressions
                 left_c = self._tokens_to_c_expression(left_operand_tokens)
                 right_c = self._tokens_to_c_expression(right_operand_tokens)
+                # Determine the C comparison operator based on the Conso operator
                 op_str = "==" if op_tok_type == '==' else "!="
+                # Generate the C code using strcmp
                 return f"(strcmp({left_c}, {right_c}) {op_str} 0)"
             else:
+                # For non-string or other comparison operators, generate standard C comparison
                 left_c = self._tokens_to_c_expression(left_operand_tokens)
                 right_c = self._tokens_to_c_expression(right_operand_tokens)
+                # Combine the C expressions with the operator
                 if left_c and right_c: return f"{left_c} {op_tok_type} {right_c}"
-                elif left_c: return f"{left_c} {op_tok_type}"
-                elif right_c: return f"{op_tok_type} {right_c}"
-                else: return f"{op_tok_type}"
+                elif left_c: return f"{left_c} {op_tok_type}" # Handle unary operators if needed (though not typical for comparison)
+                elif right_c: return f"{op_tok_type} {right_c}" # Handle unary operators
+                else: return f"{op_tok_type}" # Should not happen for binary operators
+
         else:
+            # If no top-level comparison operator was found, format the segment as a simple sequence of tokens
             return self._format_token_sequence(segment_tokens)
 
     def _tokens_to_c_expression(self, tokens):
         """
-        Converts a list of (type, value) tokens into a C expression string.
+        Converts a list of (type, value) tokens representing an expression
+        into a C expression string.
         Handles operator precedence by splitting first by logical operators (&&, ||),
-        then processing segments for comparisons (==, != with strcmp for strings),
-        and finally formatting the remaining tokens.
+        then processing each segment for comparisons (using _process_comparison_segment),
+        and finally formatting the remaining tokens within segments.
+        Also replaces boolean literals 'tr' and 'fls' with '1' and '0'.
         """
         if not tokens: return ""
-        segments = []; operators = []; current_start = 0
-        paren_level = 0; bracket_level = 0
+
+        segments = [] # List to hold token lists for segments separated by logical operators
+        operators = [] # List to hold the logical operators (&&, ||)
+        current_start = 0 # Index to track the start of the current segment
+
+        paren_level = 0
+        bracket_level = 0
+
+        # Iterate through tokens to split by top-level logical operators (&&, ||)
         for i, (tok_type, _) in enumerate(tokens):
             if tok_type == '(': paren_level += 1
             elif tok_type == ')': paren_level -= 1
             elif tok_type == '[': bracket_level += 1
             elif tok_type == ']': bracket_level -= 1
+            # If a logical operator is found at the top level
             elif paren_level == 0 and bracket_level == 0 and tok_type in ['&&', '||']:
+                # Add the tokens from the current segment to the segments list
                 segments.append(tokens[current_start:i])
+                # Add the operator to the operators list
                 operators.append(tok_type)
+                # Update the start index for the next segment
                 current_start = i + 1
+
+        # Add the last segment after the loop finishes
         segments.append(tokens[current_start:])
+
+        # Process each segment to handle comparisons within it
         processed_segments = [self._process_comparison_segment(segment) for segment in segments]
-        result_parts = [processed_segments[0]]
-        for i, op in enumerate(operators):
-            result_parts.append(f" {op} ")
-            result_parts.append(processed_segments[i+1])
+
+        # Reconstruct the full C expression by joining the processed segments with the logical operators
+        result_parts = []
+        if processed_segments:
+            result_parts.append(processed_segments[0]) # Add the first processed segment
+            # Add the operators and the subsequent processed segments
+            for i, op in enumerate(operators):
+                result_parts.append(f" {op} ") # Add the operator with spacing
+                result_parts.append(processed_segments[i+1]) # Add the next processed segment
+
+        # Join all parts into a single string
         result = "".join(result_parts)
+
+        # Replace Conso boolean literals ('tr', 'fls') with C equivalents ('1', '0')
         result = self._replace_bool_literals(result)
+
         return result
 
     def _replace_bool_literals(self, text):
-        """Replaces whole-word 'tr' and 'fls' with '1' and '0'."""
-        import re
+        """
+        Replaces whole-word occurrences of 'tr' and 'fls' with '1' and '0'
+        using regular expressions to avoid replacing substrings.
+        """
+        # Replace 'tr' only when it's a whole word
         text = re.sub(r'\btr\b', '1', text)
+        # Replace 'fls' only when it's a whole word
         text = re.sub(r'\bfls\b', '0', text)
         return text
 
