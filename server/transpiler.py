@@ -923,13 +923,13 @@ class ConsoTranspilerTokenBased:
         Processes an input statement (var = npt("prompt");) by generating
         C code. Handles single variables and arrays based on type.
         MODIFIED to handle strng[] input with strtok_r and strdup.
+        MODIFIED to add return 1 on invalid input validation for all types.
         """
         start_pos = self.current_pos
         line_num = '?'; var_name = '<unknown>' # For error reporting
 
         try:
             # 1. Consume Tokens: id = npt ( "prompt" ) ;
-            # ... (same as before) ...
             _, var_name, token_full = self._consume('id')
             line_num = self._get_token_info(token_full)[2]
             self._consume('=')
@@ -944,7 +944,6 @@ class ConsoTranspilerTokenBased:
 
 
             # 2. Look Up Symbol & Get Info (using correct attribute 'array_sizes')
-            # ... (same as the previous corrected version) ...
             symbol = self.symbol_table.lookup(var_name) # Using current scope's table
 
             if not symbol:
@@ -1056,7 +1055,6 @@ class ConsoTranspilerTokenBased:
 
             else:
                 # --- SINGLE VARIABLE INPUT ---
-                # ... (same as previous version) ...
                 if var_type == 'strng':
                     c_input_code.append(f'if (fgets({fixed_buffer_name}, {buffer_size}, stdin) != NULL) {{')
                     c_input_code.append(f'    {fixed_buffer_name}[strcspn({fixed_buffer_name}, "\\n")] = 0;')
@@ -1069,6 +1067,7 @@ class ConsoTranspilerTokenBased:
                     c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%d", &{var_name}) != 1) {{')
                     c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid integer input for {var_name}.\\n");')
                     c_input_code.append(f'        {var_name} = {self.default_values.get("nt", "0")};')
+                    c_input_code.append(f'        return 1; // Exit function on invalid input')
                     c_input_code.append(f'    }}')
                     c_input_code.append(f'}} else {{ {var_name} = {self.default_values.get("nt", "0")}; }}')
                 elif var_type == 'dbl':
@@ -1076,6 +1075,7 @@ class ConsoTranspilerTokenBased:
                      c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%lf", &{var_name}) != 1) {{')
                      c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid double input for {var_name}.\\n");')
                      c_input_code.append(f'        {var_name} = {self.default_values.get("dbl", "0.0")};')
+                     c_input_code.append(f'        return 1; // Exit function on invalid input')
                      c_input_code.append(f'    }}')
                      c_input_code.append(f'}} else {{ {var_name} = {self.default_values.get("dbl", "0.0")}; }}')
                 elif var_type == 'chr':
@@ -1085,6 +1085,7 @@ class ConsoTranspilerTokenBased:
                      c_input_code.append(f'    }} else {{')
                      c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid character input for {var_name}.\\n");')
                      c_input_code.append(f'        {var_name} = {self.default_values.get("chr", "\'\\\\0\'")};')
+                     c_input_code.append(f'        return 1; // Exit function on invalid input')
                      c_input_code.append(f'    }}')
                      c_input_code.append(f'}} else {{ {var_name} = {self.default_values.get("chr", "\'\\\\0\'")}; }}')
                 elif var_type == 'bln':
@@ -1099,6 +1100,7 @@ class ConsoTranspilerTokenBased:
                      c_input_code.append(f'        else {{')
                      c_input_code.append(f'            fprintf(stderr, "\\nError: Invalid boolean input for {var_name} (expected 0, 1, tr, or fls).\\n");')
                      c_input_code.append(f'            {var_name} = {self.default_values.get("bln", "0")};')
+                     c_input_code.append(f'            return 1; // Exit function on invalid input')
                      c_input_code.append(f'        }}')
                      c_input_code.append(f'    }}')
                      c_input_code.append(f'}} else {{ {var_name} = {self.default_values.get("bln", "0")}; }}')
@@ -1125,7 +1127,6 @@ class ConsoTranspilerTokenBased:
             if self.current_pos == start_pos: self._skip_token()
             return f"// UNEXPECTED TRANSPILER ERROR (Input): {e}"
         
-
     def _process_return_from_tokens(self):
         self._consume('rtrn')
         if self._peek() == ';': self._consume(';'); return "return;"

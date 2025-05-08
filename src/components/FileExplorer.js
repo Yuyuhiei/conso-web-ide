@@ -101,7 +101,7 @@ const FileExplorer = ({
         </button>
         
         <span style={{ color: '#888', fontSize: '12px' }}>
-          {files.length} / 10 files
+          {files.length} / 30 files
         </span>
       </div>
       

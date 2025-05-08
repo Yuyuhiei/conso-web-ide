@@ -6,7 +6,6 @@ import InteractiveTerminal from './components/InteractiveTerminal';
 import TokenTable from './components/TokenTable';
 import Sidebar from './components/Sidebar';
 import TranspiledCodeView from './components/TranspiledCodeView';
-import DebugTest from './components/DebugTest';
 import { prepareRun } from './services/api';
 import websocketService from './services/websocketService';
 import './App.css';
@@ -239,10 +238,10 @@ const MainApp = () => {
   const handleOpenFromDisk = (event) => {
     const file = event.target.files[0];
     if (file) {
-      const reader = new FileReader();
+      const reader = new FileReader(); 
       reader.onload = (e) => {
         const content = e.target.result;
-        if (files.length >= 10) { alert('Maximum of 10 files reached.'); return; }
+        if (files.length >=30) { alert('Maximum of 30 files reached.'); return; }
         const newFile = { id: uuidv4(), name: file.name.endsWith('.cns') ? file.name : `${file.name}.cns`, content: content };
         setFiles(prevFiles => [...prevFiles, newFile]);
         setCurrentFileId(newFile.id);
@@ -267,7 +266,7 @@ const MainApp = () => {
     }
    };
   const handleFileCreate = (name) => {
-    if (files.length >= 10) { alert('Maximum of 10 files reached.'); return; }
+    if (files.length >= 30) { alert('Maximum of 30 files reached.'); return; }
     const newFile = { id: uuidv4(), name: name, content: '' };
     setFiles(prevFiles => [...prevFiles, newFile]);
     setCurrentFileId(newFile.id);
@@ -310,10 +309,6 @@ const MainApp = () => {
         {/* Current File Name */}
         <div className="file-name-container" style={{ flexGrow: 1, textAlign: 'center', color: '#aaa' }}>
           <span>{currentFile?.name || 'No file selected'}</span>
-        </div>
-        {/* Debug Link */}
-        <div style={{ marginRight: '20px' }}>
-          <Link to="/debug" style={{ color: '#0E639C', textDecoration: 'none' }}>Debug Mode</Link>
         </div>
         {/* Controls */}
         <div className="app-controls" style={{ display: 'flex', gap: '8px', padding: '5px 0' }}>
@@ -415,17 +410,11 @@ const DebugHeader = () => (
     <div><Link to="/" style={{ color: '#0E639C', textDecoration: 'none' }}>Back to Editor</Link></div>
   </header>
 );
-const DebugTestWithHeader = () => (
-  <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#1e1e1e', color: '#d4d4d4' }}>
-    <DebugHeader />
-    <DebugTest />
-  </div>
-);
+
 const App = () => (
   <Router>
     <Routes>
       <Route path="/" element={<MainApp />} />
-      <Route path="/debug" element={<DebugTestWithHeader />} />
     </Routes>
   </Router>
 );

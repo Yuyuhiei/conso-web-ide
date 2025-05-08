@@ -1,0 +1,80 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Frontend",
+      "type": "shell",
+      "command": "npm start",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "devServers",
+        "panel": "new",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Start Main Server",
+      "type": "shell",
+      // Note: Using 'cmd /c' to ensure activation works correctly in the shell task
+      "command": ".\\venv\\Scripts\\activate",
+      "options": {
+        "cwd": "${workspaceFolder}/server"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "devServers",
+        "panel": "new",
+        "reveal": "always"
+      }
+    },
+    {
+        "label": "Start MainAPI Server",
+        "type": "shell",
+        // Note: Using 'cmd /c' to ensure activation works correctly in the shell task
+        "command": "uvicorn server:app --reload --host 0.0.0.0 --port 5000",
+        "options": {
+          "cwd": "${workspaceFolder}/server"
+        },
+        "isBackground": true,
+        "problemMatcher": [],
+        "presentation": {
+          "group": "devServers",
+          "panel": "new",
+          "reveal": "always"
+        }
+      },
+    {
+      "label": "Start WebSocket Server",
+      "type": "shell",
+      // Note: Using 'cmd /c' to ensure activation works correctly in the shell task
+      "command": "uvicorn websocket_server:app --reload --port 5001",
+      "options": {
+        "cwd": "${workspaceFolder}/server"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "devServers",
+        "panel": "new",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Start All Servers",
+      "dependsOn": [
+        "Start Frontend",
+        "Start Main Server",
+        "Start MainAPI Server",
+        "Start WebSocket Server"
+      ],
+      "dependsOrder": "parallel",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
