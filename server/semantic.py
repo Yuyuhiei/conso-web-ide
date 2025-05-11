@@ -1197,99 +1197,70 @@ class SemanticAnalyzer:
                 raise SemanticError(f"Expected ',' or ';' after struct instance, got '{token_type}'", line, column)
         
     def analyze_struct_member_access(self):
-        """Analyze a struct member access (reading or assignment)"""
+        """
+        Analyze a struct member access (reading or assignment LHS) and return the member type.
+        This function only analyzes the `id.id` part, not the assignment or RHS.
+        """
         # Get struct instance name
         token_type, instance_name, line, column = self.get_current_token()
-        
+
         # Debug output
         print(f"Analyzing struct member access for '{instance_name}' at line {line}, column {column}")
-        
+
         # Check if variable exists
         instance_symbol = self.current_scope.lookup(instance_name)
         print(f"Looking for struct instance '{instance_name}' in scope '{self.current_scope.scope_name}': {'Found' if instance_symbol else 'Not Found'}")
         if not instance_symbol:
             raise SemanticError(f"Undefined variable '{instance_name}'", line, column)
-        
+
         # Check that it's a struct instance
         if instance_symbol.type != 'struct_instance':
             raise SemanticError(f"Variable '{instance_name}' is not a struct instance", line, column)
-        
+
         # Get the struct type
         struct_type_name = instance_symbol.data_type
-        
+
         # Look up the struct type in global scope (structs are only declared globally)
         struct_symbol = self.global_scope.lookup(struct_type_name)
-        
+
         # Debug
         print(f"Looking for struct '{struct_type_name}' in global scope")
         print(f"Global scope contains: {[name for name in self.global_scope.symbols.keys()]}")
-        
+
         if not struct_symbol:
             raise SemanticError(f"Undefined struct type '{struct_type_name}'", line, column)
-        
+
         if struct_symbol.type != 'struct':
             raise SemanticError(f"Type '{struct_type_name}' is not a struct", line, column)
-        
+
         self.advance()  # Move past instance name
-        
+
         # Process dot operator
         token_type, token_value, line, column = self.get_current_token()
         if token_type != '.':
             raise SemanticError(f"Expected '.' for struct member access, got '{token_type}'", line, column)
-        
+
         self.advance()  # Move past '.'
-        
+
         # Get member name
         token_type, member_name, line, column = self.get_current_token()
         if token_type != 'id':
             raise SemanticError(f"Expected member name, got '{token_type}'", line, column)
-        
+
         # Check if member exists in the struct
         struct_symbol = self.global_scope.lookup(instance_symbol.data_type)
         if not hasattr(struct_symbol, 'members') or member_name not in struct_symbol.members:
             raise SemanticError(f"Struct '{instance_symbol.data_type}' has no member '{member_name}'", line, column)
-        
+
+        # --- REMOVED: Assignment handling logic from here ---
+        # The assignment logic will be handled by analyze_assignment
+
         self.advance()  # Move past member name
-        
-        # Check for assignment
-        is_assignment = False
-        if self.get_current_token()[0] == '=':
-            is_assignment = True
-            
-            # Process assignment logic as before
-            self.advance()  # Move past '='
-            
-            # Find and analyze the expression
-            start_pos = self.current_token_index
-            while self.current_token_index < len(self.token_stream) and self.token_stream[self.current_token_index][0] != ';':
-                self.advance()
-            end_pos = self.current_token_index
-            self.current_token_index = start_pos
-            
-            expr_type = self.analyze_expression(end_pos)
-            
-            # Verify type compatibility
-            member_symbol = struct_symbol.members[member_name]
-            if expr_type != member_symbol.data_type:
-                raise SemanticError(f"Type mismatch: Cannot assign '{expr_type}' to struct member of type '{member_symbol.data_type}'", 
-                                self.get_current_token()[2], self.get_current_token()[3])
-            
-            # Mark this member as initialized for this instance
-            if not hasattr(instance_symbol, 'initialized_members'):
-                instance_symbol.initialized_members = set()
-            instance_symbol.initialized_members.add(member_name)
-            
-            # Move past semicolon if present
-            if self.get_current_token()[0] == ';':
-                self.advance()
-        else:
-            # This is a read access - check if the member has been initialized
-            if not hasattr(instance_symbol, 'initialized_members') or member_name not in instance_symbol.initialized_members:
-                raise SemanticError(f"Uninitialized struct member '{instance_name}.{member_name}' accessed", line, column)
-        
+
         # Get the member type for expression typing
         member_symbol = struct_symbol.members[member_name]
-        return member_symbol.data_type
+        print(f"Finished analyzing struct member access for '{instance_name}.{member_name}', member type: {member_symbol.data_type}")
+        return member_symbol.data_type # Return the type of the member
             
     # --- Modified analyze_main_function ---
     def analyze_main_function(self):
@@ -3102,328 +3073,170 @@ class SemanticAnalyzer:
         return declared_type == value_type
 
     def analyze_assignment(self):
-        """Analyze variable, array element, or struct member assignment, including special handling for npt input."""
-        # Save the starting position of the potential LHS
-        lhs_start_pos = self.current_token_index
-        token_type, var_name, line, column = self.get_current_token()
-
-        if token_type != 'id':
-             # This analyze_assignment should only be called when starting with an ID
-             raise SemanticError(f"Expected identifier for assignment target, got '{token_type}'", line, column)
-
-        # Look up the base symbol (variable, array, or struct instance)
-        base_symbol = self.current_scope.lookup(var_name)
-        if not base_symbol:
+        """Analyze variable assignment including shortcut assignment operators"""
+        var_token_type, var_name, line, column = self.get_current_token()
+        
+        # Debug output
+        print(f"Analyzing assignment for variable '{var_name}' at line {line}, column {column}")
+        
+        # Check if variable exists
+        symbol = self.current_scope.lookup(var_name)
+        if not symbol:
             raise SemanticError(f"Variable '{var_name}' not declared", line, column)
-
-        # Check if the base symbol is a constant (cannot assign to a constant variable or array)
-        if base_symbol.is_constant:
-            raise SemanticError(f"Cannot assign to constant '{var_name}'", line, column)
-
-        self.advance() # Move past the initial identifier
-
-        # Determine the type of assignment target (simple var, array element, struct member)
-        target_type = None # This will hold the semantic type for standard assignments
-        is_array_element = False
-        is_struct_member = False
-        member_name_for_init = None # To track the specific struct member name
-
-        next_token_type, _, op_line, op_column = self.get_current_token() # Get the token after the initial ID
-
-        # --- Handle Array Element Assignment LHS ---
-        if next_token_type == '[':
-             if not base_symbol.is_array:
-                  raise SemanticError(f"Variable '{var_name}' is not an array", line, column)
-
-             is_array_element = True
-             # Analyze the array access part. This function validates indices and advances index past ']'
-             # It also returns the element type, which we need for standard assignments.
-             target_type = self.analyze_array_access() # analyze_array_access advances index past ']'
-             # After analyze_array_access, current_token_index is at the token AFTER the last ']'
-
-             # The token after the array access must be the assignment operator '='
-             assign_op_token_type, assign_op_value, assign_op_line, assign_op_column = self.get_current_token()
-
-             if assign_op_token_type != '=':
-                  # Array elements only support regular assignment (=) currently
-                  raise SemanticError(f"Expected '=' for array element assignment, got '{assign_op_token_type}'", assign_op_line, assign_op_column)
-
-             self.advance() # Move past '='
-
-             # Check if the RHS is a direct npt function call
-             rhs_token_type, rhs_token_value, rhs_line, rhs_column = self.get_current_token()
-             if rhs_token_type == 'npt':
-                  print(f"Found npt function call on RHS of array element assignment for '{var_name}[...]'")
-                  # Analyze the npt call. This validates args and advances index past ')'.
-                  # We ignore the return type ('strng') here as per the requirement for npt input.
-                  self.analyze_function_call() # analyze_function_call advances index past ')'
-
-                  # Assuming syntax analysis ensures the semicolon is present
-                  self.advance() # Move past ';'
-
-                  # Mark the base array symbol as initialized (conceptually, as elements are initialized)
-                  base_symbol.initialized = True
-                  print(f"Marked array '{base_symbol.name}' as initialized after npt assignment.")
-
-                  return # Handled array element npt assignment
-
-             # If not a direct npt call, proceed with standard expression analysis
-             # Reset index to the start of the expression (after '=')
-             expr_start_pos = self.current_token_index
-
-             # Find the end of the expression (semicolon)
-             while (self.current_token_index < len(self.token_stream) and
-                    self.get_current_token()[0] != ';'):
-                 self.advance()
-
-             if self.current_token_index >= len(self.token_stream) or self.get_current_token()[0] != ';':
-                  raise SemanticError("Expected ';' after assignment expression", assign_op_line, assign_op_column)
-
-             expr_end_pos = self.current_token_index
-             self.current_token_index = expr_start_pos # Reset to start of expression
-
-             # Analyze the expression
-             expr_type = self.analyze_expression(expr_end_pos)
-
-             # Perform standard type compatibility check against the array element type
-             if target_type != expr_type:
-                  # Allow nt = dbl and dbl = nt? Or keep strict? Keeping strict.
-                  raise SemanticError(
-                      f"Type mismatch: Cannot assign '{expr_type}' to array element of type '{target_type}'",
-                      assign_op_line, assign_op_column
-                  )
-
-             # Mark the base array symbol as initialized
-             base_symbol.initialized = True
-
-             # Move past the semicolon
-             if self.get_current_token()[0] == ';':
-                 self.advance()
-             return # Handled standard array element assignment
-
-
-        # --- Handle Struct Member Assignment LHS ---
-        if next_token_type == '.':
-             if base_symbol.type != 'struct_instance':
-                  raise SemanticError(f"Variable '{var_name}' is not a struct instance", line, column)
-
-             is_struct_member = True
-
-             # Analyze the struct member access. This validates the member and advances index past member name.
-             # It also returns the member type, which we need for standard assignments.
-             # We need to capture the member name *before* analyze_struct_member_access advances past it.
-             dot_token_pos = self.current_token_index # Position of the '.' token
-             self.advance() # Move past '.' to get the member ID
-             member_id_token_type, member_id_value, member_id_line, member_id_column = self.get_current_token()
-             if member_id_token_type != 'id':
-                  raise SemanticError(f"Expected member name after '.', got '{member_id_token_type}'", member_id_line, member_id_column)
-             member_name_for_init = member_id_value # Store member name for initialization tracking
-
-             # Reset index to the start of the struct member access (the ID before the dot)
-             self.current_token_index = lhs_start_pos
-             # Now call the existing analyze_struct_member_access which will re-parse
-             # the instance.member part and advance the index past the member name.
-             target_type = self.analyze_struct_member_access() # Advances index past member name
-
-             # After analyze_struct_member_access, current_token_index is at the token AFTER the member name
-             # This token should be the assignment operator '='
-             assign_op_token_type, assign_op_value, assign_op_line, assign_op_column = self.get_current_token()
-
-             if assign_op_token_type != '=':
-                  # Struct members only support regular assignment (=) currently
-                  raise SemanticError(f"Expected '=' for struct member assignment, got '{assign_op_token_type}'", assign_op_line, assign_op_column)
-
-             self.advance() # Move past '='
-
-             # Check if the RHS is a direct npt function call
-             rhs_token_type, rhs_token_value, rhs_line, rhs_column = self.get_current_token()
-             if rhs_token_type == 'npt':
-                  print(f"Found npt function call on RHS of struct member assignment for '{var_name}.{member_name_for_init}'")
-                  # Analyze the npt call. This validates args and advances index past ')'.
-                  self.analyze_function_call() # analyze_function_call advances index past ')'
-
-                  # Assuming syntax analysis ensures the semicolon is present
-                  self.advance() # Move past ';'
-
-                  # Mark the struct instance symbol as initialized and the specific member
-                  base_symbol.initialized = True
-                  if hasattr(base_symbol, 'initialized_members'):
-                       base_symbol.initialized_members.add(member_name_for_init)
-                       print(f"Marked struct member '{base_symbol.name}.{member_name_for_init}' as initialized after npt assignment.")
-                  else:
-                       print(f"Warning: Struct instance '{base_symbol.name}' has no initialized_members set.")
-
-                  print(f"Marked struct instance '{base_symbol.name}' as initialized after npt assignment.")
-
-                  return # Handled struct member npt assignment
-
-             # If not a direct npt call, proceed with standard expression analysis
-             # Reset index to the start of the expression (after '=')
-             expr_start_pos = self.current_token_index
-
-             # Find the end of the expression (semicolon)
-             while (self.current_token_index < len(self.token_stream) and
-                    self.get_current_token()[0] != ';'):
-                 self.advance()
-
-             if self.current_token_index >= len(self.token_stream) or self.get_current_token()[0] != ';':
-                  raise SemanticError("Expected ';' after assignment expression", assign_op_line, assign_op_column)
-
-             expr_end_pos = self.current_token_index
-             self.current_token_index = expr_start_pos # Reset to start of expression
-
-             # Analyze the expression
-             expr_type = self.analyze_expression(expr_end_pos)
-
-             # Perform standard type compatibility check against the struct member type
-             if target_type != expr_type:
-                       # Allow nt = dbl and dbl = nt? Or keep strict? Keeping strict.
-                       raise SemanticError(
-                           f"Type mismatch: Cannot assign '{expr_type}' to struct member of type '{target_type}'",
-                           assign_op_line, assign_op_column
-                       )
-
-             # Mark the struct instance symbol as initialized and the specific member
-             base_symbol.initialized = True
-             if hasattr(base_symbol, 'initialized_members'):
-                  # Need to find the member name again for standard assignment initialization tracking
-                  # Backtrack to the token before '='
-                  temp_idx = assign_op_line # Use line number as a rough guide, need better token index logic
-                  # This backtracking is getting complicated and error-prone.
-                  # A cleaner approach would be to modify analyze_struct_member_access to
-                  # return the member symbol. For now, let's rely on analyze_struct_member_access
-                  # already handling the initialization tracking for standard assignments.
-                  pass # Relying on analyze_struct_member_access for standard assignment member init tracking
-             else:
-                  print(f"Warning: Struct instance '{base_symbol.name}' has no initialized_members set.")
-
-
-             # Move past the semicolon
-             if self.get_current_token()[0] == ';':
-                 self.advance()
-             return # Handled standard struct member assignment
-
-
-        # --- Handle Simple Variable Assignment, Increment/Decrement, Shortcut Assignment ---
-        # At this point, the token after the initial ID is NOT '[' or '.'
-        # It must be an operator: =, ++, --, +=, -=, *=, /=, %=
-
+        
+        var_type = symbol.data_type
+        print(f"Variable '{var_name}' has type '{var_type}'")
+        
+        # Check if this is a constant
+        if symbol.is_constant:
+            raise SemanticError(f"Cannot reassign constant '{var_name}'", line, column)
+        
+        # Move past variable name
+        self.advance()
+        
+        # Check which assignment operator is being used
+        token_type, token_value, op_line, op_column = self.get_current_token()
+        print(f"Assignment operator: {token_type}")
+        
         # Handle increment/decrement operators (++, --)
-        if next_token_type in ['++', '--']:
-            # Check if variable is of type 'nt'
-            if base_symbol.data_type != 'nt':
-                raise SemanticError(f"Increment/decrement operators can only be applied to 'nt' variables, not '{base_symbol.data_type}'",
+        if token_type in ['++', '--']:
+            # These operators can only be applied to 'nt' variables
+            if var_type != 'nt':
+                raise SemanticError(f"Increment/decrement operators can only be applied to 'nt' variables, not '{var_type}'", 
                                 op_line, op_column)
-
-            self.advance()  # Move past the operator (++, --)
-
+            
+            self.advance()  # Move past the operator
+            
             # Check for semicolon
             if self.get_current_token()[0] != ';':
-                raise SemanticError(f"Expected ';' after increment/decrement operation",
+                raise SemanticError(f"Expected ';' after increment/decrement operation", 
                                 self.get_current_token()[2], self.get_current_token()[3])
-
+            
             self.advance()  # Move past semicolon
-            base_symbol.initialized = True # Mark as initialized after operation
-            return # Handled increment/decrement
-
+            symbol.initialized = True
+            return
+        
         # Handle compound assignment operators (+=, -=, *=, /=, %=)
-        if next_token_type in ['+=', '-=', '*=', '/=', '%=']:
-            # These operators require the variable to be numeric
-            if base_symbol.data_type not in ['nt', 'dbl']:
-                raise SemanticError(f"Shortcut assignment operator '{next_token_type}' can only be applied to numeric types, not '{base_symbol.data_type}'",
+        if token_type in ['+=', '-=', '*=', '/=', '%=']:
+            print(f"Processing shortcut assignment operator '{token_type}'")
+            
+            # These operators require numeric operands for variable
+            if var_type not in ['nt', 'dbl']:
+                raise SemanticError(f"Shortcut assignment operator '{token_type}' can only be applied to numeric types, not '{var_type}'", 
                                 op_line, op_column)
-
+            
             self.advance()  # Move past the operator
-
-            # Analyze the RHS expression
-            expr_start_pos = self.current_token_index
-            while self.current_token_index < len(self.token_stream) and self.get_current_token()[0] != ';':
+            
+            # Save starting position for expression analysis
+            start_pos = self.current_token_index
+            
+            # Skip ahead to find the end of the expression (semicolon)
+            while (self.current_token_index < len(self.token_stream) and 
+                self.token_stream[self.current_token_index][0] != ';'):
                 self.advance()
-            expr_end_pos = self.current_token_index
-            self.current_token_index = expr_start_pos # Reset to start of expression
-
-            expr_type = self.analyze_expression(expr_end_pos)
-
-            # RHS must also be numeric
+            
+            # Reset position to start of expression
+            end_pos = self.current_token_index
+            self.current_token_index = start_pos
+            
+            # Get the tokens being analyzed for debug
+            expr_tokens = self.token_stream[start_pos:end_pos]
+            expr_str = " ".join([f"{t[0]}('{t[1]}')" for t in expr_tokens])
+            print(f"Expression tokens: {expr_str}")
+            
+            # Analyze the expression on the right side of the shortcut assignment
+            expr_type = self.analyze_expression(end_pos)
+            print(f"Expression type: {expr_type}")
+            
+            # For shortcut assignments, the right operand must be a compatible numeric type
             if expr_type not in ['nt', 'dbl']:
                 raise SemanticError(
-                    f"Type mismatch: Cannot use '{next_token_type}' with non-numeric type '{expr_type}' on RHS",
+                    f"Type mismatch: Cannot use '{token_type}' with non-numeric type '{expr_type}'",
                     op_line, op_column
                 )
-
+            
             # Mark variable as initialized
-            base_symbol.initialized = True
-
+            symbol.initialized = True
+            
             # Move past the semicolon
             if self.get_current_token()[0] == ';':
                 self.advance()  # Move past the semicolon
-            return # Handled shortcut assignment
-
-
-        # Handle regular assignment (=) for simple variables
-        if next_token_type == '=':
+            return
+        
+        # Regular assignment (=)
+        elif token_type == '=':
+            # ... (rest of your existing regular assignment code)
             self.advance()  # Move past the = operator
 
-            # Check if the RHS is a direct npt function call
-            rhs_token_type, rhs_token_value, rhs_line, rhs_column = self.get_current_token()
-            if rhs_token_type == 'npt':
+            # Check if this is an npt input statement directly    
+            next_token = self.get_current_token()
+            if next_token and next_token[0] == 'npt':
                 print(f"Found direct npt function call in assignment for variable '{var_name}'")
                 # Use our function call analyzer to process the npt function
-                self.analyze_function_call() # analyze_function_call advances index past ')'
-
-                # Assuming syntax analysis ensures the semicolon is present
-                self.advance()  # Move past the semicolon
-
+                expr_type = self.analyze_function_call()
+                
                 # npt function returns strng by default, but we'll allow type coercion
                 # Type conversion happens at runtime, so we'll just mark the variable as initialized
-                base_symbol.initialized = True
-                print(f"Marked variable '{base_symbol.name}' as initialized after npt assignment.")
-
-                return # Handled simple variable npt assignment
-
-            # If not a direct npt call, proceed with standard expression analysis
+                symbol.initialized = True
+                
+                # Current position is now at the semicolon
+                if self.get_current_token()[0] == ';':
+                    self.advance()  # Move past the semicolon
+                
+                return
+        
             # Save starting position for expression analysis
             start_pos = self.current_token_index
-
+            
             # Skip ahead to find the end of the expression (semicolon)
-            while (self.current_token_index < len(self.token_stream) and
-                   self.token_stream[self.current_token_index][0] != ';'):
+            while (self.current_token_index < len(self.token_stream) and 
+                self.token_stream[self.current_token_index][0] != ';'):
                 self.advance()
-
-            if self.current_token_index >= len(self.token_stream) or self.get_current_token()[0] != ';':
-                 raise SemanticError("Expected ';' after assignment expression", op_line, op_column)
-
+            
+            # Reset position to start of expression
             end_pos = self.current_token_index
-            self.current_token_index = start_pos # Reset position to start of expression
-
+            self.current_token_index = start_pos
+            
             # Analyze the expression
             expr_type = self.analyze_expression(end_pos)
-
-            # Validate assignment compatibility
-            if base_symbol.data_type != expr_type:
+            
+            # Validate assignment compatibility - no implicit conversions in Conso
+            if var_type != expr_type:
                 # Special case: Boolean variable can be assigned result of relational expression
-                if base_symbol.data_type == 'bln' and expr_type == 'bln':
-                    pass # Valid
+                if var_type == 'bln' and expr_type == 'bln':
+                    # This is valid - a boolean variable can hold the result of a relational expression
+                    pass
                 else:
-                     # Allow nt = dbl and dbl = nt? Or keep strict? Keeping strict.
-                     raise SemanticError(
-                         f"Type mismatch: Cannot assign '{expr_type}' to '{base_symbol.data_type}'",
-                         op_line, op_column
-                     )
-
-            base_symbol.initialized = True
-
+                    raise SemanticError(
+                        f"Type mismatch: Cannot assign {expr_type} to {var_type}",
+                        op_line, op_column
+                    )
+            
+            symbol.initialized = True
+            
             # Current position is now at the semicolon
             if self.get_current_token()[0] == ';':
                 self.advance()  # Move past the semicolon
-            return # Handled standard simple variable assignment
-
         else:
-            # If we reached here, the token after the ID was not a valid assignment operator or access start
-            # Reset index to the token after the ID for a more accurate error message
-            self.current_token_index = lhs_start_pos + 1
-            token_type, token_value, line, column = self.get_current_token()
-            raise SemanticError(f"Expected assignment operator, array access '[', or struct member access '.', got '{token_type}'", line, column)
+            raise SemanticError(f"Expected assignment operator, got '{token_type}'", op_line, op_column)
+
+    def check_variable_usage(self, var_name, line, column):
+        """Check if a variable used in an expression or function call is declared"""
+        # Skip check for built-in symbols if applicable
+        if var_name in self.built_in_functions:
+            return True
+            
+        # Look up the variable in the current scope and parent scopes
+        symbol = self.current_scope.lookup(var_name)
+        if not symbol:
+            raise SemanticError(f"Undefined variable '{var_name}'", line, column)
+            
+        # Optionally: Check if variable is initialized before use
+        if not symbol.initialized:
+            # This could be a warning instead of an error
+            print(f"Warning: Variable '{var_name}' may be used before initialization at line {line}, column {column}")
+            
+        return symbol.data_type
     
     def analyze_if_statement(self):
         """Analyze an if statement (f statement in Conso)"""

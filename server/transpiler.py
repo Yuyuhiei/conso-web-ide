@@ -1235,8 +1235,11 @@ class ConsoTranspilerTokenBased:
                 if target_type == 'strng':
                      # Handle char* targets (simple var, array element strng[], struct member char*)
                      # Use strdup to allocate memory and copy the string from the buffer
-                     # Need to free any previously allocated string memory first
-                     c_input_code.append(f'    free({target_c_expression}); // Free existing string if any')
+                     # Need to free any previously allocated string memory first, but NOT for string literals
+                     c_input_code.append(f'    // Free existing string if it was dynamically allocated (not a literal)')
+                     c_input_code.append(f'    if ({target_c_expression} != NULL && {target_c_expression} != "" && {target_c_expression} != " ") {{ // Basic check to avoid freeing literals')
+                     c_input_code.append(f'        free({target_c_expression});')
+                     c_input_code.append(f'    }}')
                      c_input_code.append(f'    {target_c_expression} = strdup({fixed_buffer_name});')
                      # Check if strdup failed (memory allocation error)
                      c_input_code.append(f'    if ({target_c_expression} == NULL) {{')
@@ -1244,7 +1247,8 @@ class ConsoTranspilerTokenBased:
                      c_input_code.append(f'        return 1; // Indicate failure and exit the current function')
                      c_input_code.append(f'    }}')
                      # Add the closing brace for the fgets if block
-                     c_input_code.append(f'}} else {{ /* Handle fgets error or EOF */ free({target_c_expression}); {target_c_expression} = NULL; }}') # Corrected else block and closing brace
+                     # Corrected else block: Removed free, only set to NULL on fgets error
+                     c_input_code.append(f'}} else {{ /* Handle fgets error or EOF */ {target_c_expression} = NULL; }}')
 
                 elif target_type == 'chr' and '[' in target_c_expression:
                      # Handle char array targets (e.g., char_array[index] or struct member char array)
