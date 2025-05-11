@@ -31,7 +31,7 @@ class ConsoTranspilerTokenBased:
     def __init__(self, token_list, symbol_table=None, function_scopes=None): # Added function_scopes
         """
         Initializes the transpiler.
-
+        
         Args:
             token_list: List of tokens from the lexer (EOF token should be removed).
             symbol_table: The global SymbolTable instance (used as default).
