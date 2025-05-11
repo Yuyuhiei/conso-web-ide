@@ -1006,7 +1006,7 @@ class ConsoTranspilerTokenBased:
         It distinguishes the array shortcut input (e.g., `arr = npt(...)`)
         which implies multiple values, from single-value assignments.
         Includes fix for string target C code generation structure.
-        Only adds 'return 1;' on input failure if in the 'main' scope.
+        Uses exit(1) on input failure for all scopes.
         """
         start_pos = self.current_pos
         line_num = '?'
@@ -1158,10 +1158,9 @@ class ConsoTranspilerTokenBased:
                     # Check if strdup failed (memory allocation error)
                     c_input_code.append(f'        if ({var_name}[items_read_{var_name}] == NULL) {{')
                     c_input_code.append(f'            fprintf(stderr, "Memory allocation failed for string array input.\\n");')
-                    # --- Conditional return 1 based on scope ---
-                    if current_scope_name == "main":
-                         c_input_code.append(f'            return 1; // Indicate failure')
-                    # --- End Conditional return 1 ---
+                    # --- Unconditional exit(1) on failure ---
+                    c_input_code.append(f'            exit(1); // Indicate failure')
+                    # --- End Unconditional exit(1) ---
                     c_input_code.append(f'        }}')
                     c_input_code.append(f'    }}') # End for loop
 
@@ -1248,10 +1247,9 @@ class ConsoTranspilerTokenBased:
                      # Check if strdup failed (memory allocation error)
                      c_input_code.append(f'    if ({target_c_expression} == NULL) {{')
                      c_input_code.append(f'        fprintf(stderr, "Memory allocation failed for string input.\\n");')
-                     # --- Conditional return 1 based on scope ---
-                     if current_scope_name == "main":
-                         c_input_code.append(f'        return 1; // Indicate failure and exit the current function')
-                     # --- End Conditional return 1 ---
+                     # --- Unconditional exit(1) on failure ---
+                     c_input_code.append(f'        exit(1); // Indicate failure and exit the current function')
+                     # --- End Unconditional exit(1) ---
                      c_input_code.append(f'    }}')
                      # Add the closing brace for the fgets if block
                      # Corrected else block: Removed free, only set to NULL on fgets error
@@ -1276,10 +1274,9 @@ class ConsoTranspilerTokenBased:
                     c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%d", &({target_c_expression})) != 1) {{')
                     # If sscanf fails (input is not a valid integer)
                     c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid integer input for {target_c_expression}.\\n");')
-                    # --- Conditional return 1 based on scope ---
-                    if current_scope_name == "main":
-                         c_input_code.append(f'        return 1; // Indicate failure and exit the current function')
-                    # --- End Conditional return 1 ---
+                    # --- Unconditional exit(1) on failure ---
+                    c_input_code.append(f'        exit(1); // Indicate failure and exit the current function')
+                    # --- End Unconditional exit(1) ---
                     c_input_code.append(f'    }}')
                     # Add the closing brace for the fgets if block
                     c_input_code.append(f'}} else {{ /* Handle fgets error or EOF */ }}') # Added else block and closing brace
@@ -1289,10 +1286,9 @@ class ConsoTranspilerTokenBased:
                      c_input_code.append(f'    if (sscanf({fixed_buffer_name}, "%lf", &({target_c_expression})) != 1) {{')
                      # If sscanf fails (input is not a valid double)
                      c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid double input for {target_c_expression}.\\n");')
-                     # --- Conditional return 1 based on scope ---
-                     if current_scope_name == "main":
-                         c_input_code.append(f'        return 1; // Indicate failure and exit the current function')
-                     # --- End Conditional return 1 ---
+                     # --- Unconditional exit(1) on failure ---
+                     c_input_code.append(f'        exit(1); // Indicate failure and exit the current function')
+                     # --- End Unconditional exit(1) ---
                      c_input_code.append(f'    }}')
                      # Add the closing brace for the fgets if block
                      c_input_code.append(f'}} else {{ /* Handle fgets error or EOF */ }}') # Added else block and closing brace
@@ -1304,10 +1300,9 @@ class ConsoTranspilerTokenBased:
                      c_input_code.append(f'    }} else {{')
                      # If the buffer is empty or only contains a newline
                      c_input_code.append(f'        fprintf(stderr, "\\nError: Invalid character input for {target_c_expression}.\\n");')
-                     # --- Conditional return 1 based on scope ---
-                     if current_scope_name == "main":
-                         c_input_code.append(f'        return 1; // Indicate failure and exit the current function')
-                     # --- End Conditional return 1 ---
+                     # --- Unconditional exit(1) on failure ---
+                     c_input_code.append(f'        exit(1); // Indicate failure and exit the current function')
+                     # --- End Unconditional exit(1) ---
                      c_input_code.append(f'    }}')
                      # Add the closing brace for the fgets if block
                      c_input_code.append(f'}} else {{ /* Handle fgets error or EOF */ }}') # Added else block and closing brace
@@ -1325,10 +1320,9 @@ class ConsoTranspilerTokenBased:
                      c_input_code.append(f'        else {{')
                      # If none of the expected formats match
                      c_input_code.append(f'            fprintf(stderr, "\\nError: Invalid boolean input for {target_c_expression} (expected 0, 1, tr, or fls).\\n");')
-                     # --- Conditional return 1 based on scope ---
-                     if current_scope_name == "main":
-                         c_input_code.append(f'            return 1; // Indicate failure and exit the current function')
-                     # --- End Conditional return 1 ---
+                     # --- Unconditional exit(1) on failure ---
+                     c_input_code.append(f'            exit(1); // Indicate failure and exit the current function')
+                     # --- End Unconditional exit(1) ---
                      c_input_code.append(f'        }}')
                      c_input_code.append(f'    }}')
                      # Add the closing brace for the fgets if block
@@ -1367,6 +1361,7 @@ class ConsoTranspilerTokenBased:
             if self.current_pos == start_pos: self._skip_token()
             # Return a C comment indicating the unexpected error
             return f"// UNEXPECTED TRANSPILER ERROR (Input): {type(e).__name__}: {e}"
+
         
     def _process_return_from_tokens(self):
         self._consume('rtrn')
