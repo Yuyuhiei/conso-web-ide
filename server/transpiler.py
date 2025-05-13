@@ -41,9 +41,9 @@ class ConsoTranspilerTokenBased:
         self.symbol_table = symbol_table # This will be the default (global) table
         self.function_scopes = function_scopes if function_scopes is not None else {} # Store function scopes
         self.current_pos = 0
-        self.output_parts = []
+        self.output_parts = [] 
         self.current_indent_level = 0
-        self.input_buffer_declared_in_scope = set()
+        self.input_buffer_declared_in_scope = set() 
 
         # Mappings (Keep existing mappings)
         self.type_mapping = {

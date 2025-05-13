@@ -56,6 +56,13 @@ const MainApp = () => {
   const editorRef = useRef(null);
   const interactiveTerminalRef = useRef(null);
   const [currentTheme, setCurrentTheme] = useState(() => localStorage.getItem('conso-theme') || 'conso-dark');
+
+  // --- State for Terminal Resizing ---
+  const [terminalPanelHeight, setTerminalPanelHeight] = useState(300); // Initial height in pixels
+  const isResizingTerminalPanelRef = useRef(false);
+  const terminalResizerLastYRef = useRef(0);
+  // --- End State for Terminal Resizing ---
+
   const currentFile = files.find(file => file.id === currentFileId) || files[0] || { id: null, name: '', content: '' };
   const canRun = syntaxValid && !isRunning && currentFile && currentFile.content.trim().length > 0;
 
@@ -294,6 +301,37 @@ const MainApp = () => {
    };
   const handleThemeChange = (themeId) => setCurrentTheme(themeId);
 
+  // --- Terminal Panel Resize Handlers ---
+  const handleMouseDownOnTerminalResizer = (e) => {
+    isResizingTerminalPanelRef.current = true;
+    terminalResizerLastYRef.current = e.clientY;
+    document.body.style.cursor = 'ns-resize'; // Change cursor globally
+    e.preventDefault();
+
+    const handleMouseMove = (moveEvent) => {
+      if (!isResizingTerminalPanelRef.current) return;
+      const deltaY = moveEvent.clientY - terminalResizerLastYRef.current;
+      setTerminalPanelHeight(prevHeight => {
+        const newHeight = prevHeight - deltaY; // Subtract deltaY because dragging down increases height from top
+        const minHeight = 100; // Minimum height for the terminal panel
+        const maxHeight = window.innerHeight - 200; // Max height (leave some space for editor & header)
+        return Math.max(minHeight, Math.min(newHeight, maxHeight));
+      });
+      terminalResizerLastYRef.current = moveEvent.clientY;
+    };
+
+    const handleMouseUp = () => {
+      isResizingTerminalPanelRef.current = false;
+      document.body.style.cursor = 'default'; // Reset global cursor
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+  // --- End Terminal Panel Resize Handlers ---
+
   // --- Render ---
   return (
     <div className="app-container" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -367,8 +405,22 @@ const MainApp = () => {
             <TokenTable tokens={tokens} />
           </div>
 
+          {/* Resizer for Terminal Panel */}
+          <div
+            className="terminal-panel-resizer"
+            style={{
+              height: '1px', // Height of the draggable area
+              width: '100%',
+              backgroundColor: '#333', // A slightly different color for the resizer
+              cursor: 'ns-resize', // North-South resize cursor
+              flexShrink: 0, // Prevent this from shrinking
+              userSelect: 'none', // Prevent text selection on the handle
+            }}
+            onMouseDown={handleMouseDownOnTerminalResizer}
+          />
+
           {/* InteractiveTerminal */}
-          <div className="terminal-wrapper" style={{ height: '300px', flexShrink: 0, display: 'flex' }}>
+          <div className="terminal-wrapper" style={{ height: `${terminalPanelHeight}px`, flexShrink: 0, display: 'flex', backgroundColor: '#1e1e1e' /* Ensure bg color */ }}>
             <InteractiveTerminal
                 ref={interactiveTerminalRef}
                 lexicalStatus={lexicalStatus}
