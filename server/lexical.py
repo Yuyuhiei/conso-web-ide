@@ -233,10 +233,84 @@ class Lexer:
 
                 # Keywords and Identifiers (Starts with Alpha) - TD1, TD2, TD6
                 if self.current_char in ALPHA:
-                    state = 180 # Starting state for identifiers in TD6
-                    lexeme += self.current_char
-                    self.advance()
-                    continue
+                    # Check for specific keyword starting characters and transition
+                    if self.current_char == 'b':
+                         state = 1 # TD1
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 'c':
+                         state = 9 # TD1
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 'd':
+                         state = 22 # TD1
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 'e':
+                         state = 36 # TD1
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 'f':
+                         state = 40 # TD1
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 'l':
+                         state = 52 # TD2
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 'm':
+                         state = 58 # TD2
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 'n':
+                         state = 61 # TD2
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 'p':
+                         state = 67 # TD2
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 'r':
+                         state = 72 # TD2
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 's':
+                         state = 77 # TD2
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 't':
+                         state = 88 # TD2
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 'v':
+                         state = 91 # TD2
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    elif self.current_char == 'w':
+                         state = 94 # TD2
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+                    else:
+                         # If it starts with alpha but not a keyword starting char, it's an identifier
+                         state = 180 # Starting state for identifiers in TD6
+                         lexeme += self.current_char
+                         self.advance()
+                         continue
+
 
                 # Numbers (Starts with Digit or ~ followed by Digit) - TD7
                 if self.current_char in DIGITZERO or (self.current_char == '~' and self.peek() in DIGITZERO):
@@ -534,7 +608,7 @@ class Lexer:
                       state = 0
                  elif self.current_char in escape_map:
                       state = 164 # Transition back to character consumed state (TD5)
-                      lexeme += self.current_char # Add the escaped char to lexeme (e.g., '\n')
+                      lexeme += self.current_char
                       self.advance()
                  else:
                       errors.append(LexerError(f"Invalid escape sequence in character literal: \\{self.current_char}", start_line, start_column))
@@ -597,15 +671,15 @@ class Lexer:
 
 
             # Identifier and Keyword States (TD6, TD1, TD2)
-            # Starting state 180 is handled in state 0.
+            # Starting state 180 is handled in state 0 (for general alpha).
             # States 180-194 are for consuming identifier characters.
             # State 277 is also for consuming identifier characters (from tokenizer.py)
             # States 195 and 278 are final states for identifiers/keywords.
 
             # States for 'b' -> 'bln' (TD1)
             elif state == 1: # from 0 on 'b'
-                if self.current_char == 'o':
-                    state = 2
+                if self.current_char == 'l': # Corrected transition
+                    state = 2 # Corrected next state
                     lexeme += self.current_char
                     self.advance()
                 elif self.current_char is not None and self.current_char in IDENTIFIER_CHARS:
@@ -619,9 +693,9 @@ class Lexer:
                 else:
                     errors.append(LexerError(f"Invalid character in token: '{self.current_char}'", start_line, start_column))
                     state = 0
-            elif state == 2: # from 1 on 'o'
-                if self.current_char == 'o':
-                    state = 3
+            elif state == 2: # from 1 on 'l' (Corrected)
+                if self.current_char == 'n': # Corrected transition
+                    state = 3 # Corrected next state
                     lexeme += self.current_char
                     self.advance()
                 elif self.current_char is not None and self.current_char in IDENTIFIER_CHARS:
@@ -635,25 +709,9 @@ class Lexer:
                 else:
                     errors.append(LexerError(f"Invalid character in token: '{self.current_char}'", start_line, start_column))
                     state = 0
-            elif state == 3: # from 2 on 'o'
-                if self.current_char == 'l':
-                    state = 4
-                    lexeme += self.current_char
-                    self.advance()
-                elif self.current_char is not None and self.current_char in IDENTIFIER_CHARS:
-                    state = 277
-                    lexeme += self.current_char
-                    self.advance()
-                elif self.current_char is None or self.current_char in DEL22:
-                    state = 278
-                    if self.current_char is not None:
-                        self.step_back()
-                else:
-                    errors.append(LexerError(f"Invalid character in token: '{self.current_char}'", start_line, start_column))
-                    state = 0
-            elif state == 4: # from 3 on 'l' - Expecting DEL1 (TD1)
+            elif state == 3: # from 2 on 'n' (Corrected) - Expecting DEL1 (TD1)
                  if self.current_char is None or self.current_char in DEL1:
-                      state = 5 # Final state for 'bln' (TD1)
+                      state = 4 # Final state for 'bln' (TD1)
                       if self.current_char is not None:
                            self.step_back()
                  elif self.current_char is not None and self.current_char in IDENTIFIER_CHARS:
@@ -663,14 +721,14 @@ class Lexer:
                  else:
                       errors.append(LexerError(f"Invalid delimiter after 'bln': '{self.current_char}'", start_line, start_column))
                       state = 0
-            elif state == 5: # Final state for 'bln' (TD1)
+            elif state == 4: # Final state for 'bln' (TD1)
                  tokens.append(Token(TT_BOOL, lexeme, start_line, start_column))
                  state = 0
 
             # States for 'b' -> 'brk' (TD1)
-            elif state == 6: # from 1 on 'r'
+            elif state == 5: # from 1 on 'r' (Corrected state number based on TD1)
                 if self.current_char == 'k':
-                    state = 7
+                    state = 6 # Corrected next state
                     lexeme += self.current_char
                     self.advance()
                 elif self.current_char is not None and self.current_char in IDENTIFIER_CHARS:
@@ -684,9 +742,9 @@ class Lexer:
                 else:
                     errors.append(LexerError(f"Invalid character in token: '{self.current_char}'", start_line, start_column))
                     state = 0
-            elif state == 7: # from 6 on 'k' - Expecting DEL2 (TD1)
+            elif state == 6: # from 5 on 'k' (Corrected) - Expecting DEL2 (TD1)
                  if self.current_char is None or self.current_char in DEL2:
-                      state = 8 # Final state for 'brk' (TD1)
+                      state = 7 # Final state for 'brk' (TD1)
                       if self.current_char is not None:
                            self.step_back()
                  elif self.current_char is not None and self.current_char in IDENTIFIER_CHARS:
@@ -696,7 +754,7 @@ class Lexer:
                  else:
                       errors.append(LexerError(f"Invalid delimiter after 'brk': '{self.current_char}'", start_line, start_column))
                       state = 0
-            elif state == 8: # Final state for 'brk' (TD1)
+            elif state == 7: # Final state for 'brk' (TD1)
                  tokens.append(Token(TT_BRK, lexeme, start_line, start_column))
                  state = 0
 
@@ -1998,13 +2056,86 @@ class Lexer:
             # The token type is determined in the final states (211 for integer, 222 for double)
             # based on whether the lexeme starts with '~'.
 
-            # --- Remaining Keyword States (TD1, TD2) ---
-            # States for 'e' -> 'els' (TD1) - Already implemented (States 27-30)
-            # States for 'e' -> 'elsif' (TD1) - Already implemented (States 32-34)
-            # States for 's' -> 'scope' (TD1) - Already implemented (States 90-95)
-            # States for 's' -> 'select' (TD1) - Already implemented (States 96-100 -> 289-290)
-            # States for 't' -> 'task' (TD1) - Already implemented (States 112-116)
 
+            # --- Identifier States (TD6) ---
+            # Starting state 180 is handled in state 0 (for general alpha).
+            # States 180-194 are for consuming identifier characters.
+            # State 277 is also for consuming identifier characters (from tokenizer.py)
+            # States 195 and 278 are final states for identifiers/keywords.
+
+            elif state == 180: # from 0 on any alpha that doesn't start a keyword
+                 if self.current_char is not None and self.current_char in IDENTIFIER_CHARS:
+                      lexeme += self.current_char
+                      state = 181 # Transition to next state in identifier sequence (TD6)
+                      self.advance()
+                 elif self.current_char is None or self.current_char in DEL22: # DEL22 is delimiter for identifiers (TD6)
+                      state = 195 # Final state for identifier (TD6)
+                      if self.current_char is not None:
+                           self.step_back()
+                 else:
+                      errors.append(LexerError(f"Invalid character in identifier: '{self.current_char}'", start_line, start_column))
+                      state = 0
+
+            elif state >= 181 and state <= 194: # Consuming more identifier characters (TD6)
+                 if self.current_char is not None and self.current_char in IDENTIFIER_CHARS:
+                      lexeme += self.current_char
+                      # Check identifier length constraint (up to 25 characters based on tokenizer.py)
+                      if len(lexeme) > 25:
+                           errors.append(LexerError(f"Identifier '{lexeme}' exceeds maximum length of 25 characters", start_line, start_column))
+                           state = 0 # Error state, stop processing this token
+                      else:
+                           state += 1
+                           self.advance()
+                 elif self.current_char is None or self.current_char in DEL22: # DEL22 is delimiter for identifiers (TD6)
+                      state = 195 # Final state for identifier (TD6)
+                      if self.current_char is not None:
+                           self.step_back()
+                 else:
+                      errors.append(LexerError(f"Invalid character in identifier: '{self.current_char}'", start_line, start_column))
+                      state = 0
+
+            # State 277 and 278 are from tokenizer.py, let's align with TD6 states 180-195
+            # We will use 180-195 for identifier processing based on TD6.
+            # State 195 is the final state for identifiers in TD6.
+
+            # Final state for identifier (TD6)
+            elif state == 195: # This state is also used as a starting state for numbers in TD7, need to differentiate
+                 # If the lexeme was started by an alpha character (meaning it's an identifier)
+                 if lexeme and lexeme[0] in ALPHA:
+                     keywords = {
+                        "bln": TT_BOOL, "dbl": TT_DOUBLE, "dflt": TT_DFLT,
+                        "prnt": TT_PRNT, "npt": TT_NPT, "fls": TT_FLS,
+                        "cnst": TT_CNST, "fr": TT_FR, "f": TT_F,
+                        "lsf": TT_LSF, "nt": TT_INT, "chr": TT_CHAR,
+                        "mn": TT_MN, "cs": TT_CS, "npt": TT_NPT, # 'reads' maps to 'npt'
+                        "rtrn": TT_RTRN, "fnctn": TT_FNCTN, "swtch": TT_SWTCH,
+                        "cntn": TT_CNTN, "strng": TT_STRING, "strct": TT_STRCT,
+                        "tr": TT_TR, "d": TT_D, "vd": TT_VD,
+                        "whl": TT_WHl, "==": TT_EQTO, "!=": TT_NOTEQ,
+                        "nll": TT_NULL # 'notin' maps to 'nll'
+                     }
+                     token_type = keywords.get(lexeme, TT_IDENTIFIER)
+                     tokens.append(Token(token_type, lexeme, start_line, start_column))
+                     state = 0 # Return to initial state
+                 # If the lexeme was started by '~' or digit, it's a number, handled in number states.
+                 # If state is 195 and lexeme does not start with alpha, it must be a number state transition.
+                 # This indicates an issue with state numbering overlap between TD6 and TD7.
+                 # Let's adjust the number states to avoid conflict with identifier states.
+                 # TD7 starts numbers from state 195. TD6 ends identifiers in 195.
+                 # This overlap needs careful handling or re-numbering in implementation.
+                 # Based on the diagrams, state 195 in TD7 is the *start* of a number after initial char.
+                 # State 195 in TD6 is a *final* state for identifiers.
+                 # This is a direct conflict in state numbering across diagrams.
+                 # To resolve this, I will use separate state ranges internally for clarity,
+                 # even if the diagrams use overlapping numbers.
+                 # Let's keep the TD numbers in comments for reference but use internal logic.
+                 # Re-evaluating TD7: State 0 transitions to 195 on ~ or digitzero.
+                 # State 195 then transitions to 196 on digitzero or 213 on '.'.
+                 # This means 195 is *not* a final state for numbers.
+                 # The final states for numbers are 211 (integer) and 222 (double).
+                 # State 195 in TD6 *is* a final state for identifiers.
+                 # The overlap is manageable if we check the starting character to differentiate.
+                 pass # Handled in the number states section
 
             # Let's add the EOF token when processing is finished and state is 0
             if self.current_char is None and state == 0:
