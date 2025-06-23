@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  # The Frontend Service (React App)
+  frontend:
+    # Tells Docker to build using the Dockerfile in the current directory (.)
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # Map port 80 from your computer to port 80 in the container
+      - "80:80"
+    depends_on:
+      - backend # Ensures the backend starts before the frontend (optional but good practice)
+      - python-api # Add dependency on the new python service
+
+  # The Backend Service (Node.js API)
+  backend:
+    # Tells Docker to build using the Dockerfile in the ./backend directory
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      # Map port 3001 from your computer to port 3001 in the container
+      - "3001:3001"
+    environment:
+      # This is where you'll put your secrets.
+      # Create a .env file in the root directory for these values.
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - PORT=3001
+    # Optional: Create a .env file in your project root for local development
+    env_file:
+      - .env
+
+  # --- NEW: The Python/FastAPI Service ---
+  python-api:
+    build:
+      context: ./server # Tells Docker to look in the "server" folder
+      dockerfile: Dockerfile
+    ports:
+      # Map port 5000 from your computer to port 5000 in the container
+      - "5000:5000"
+      # Map the port for the WebSocket server.
+      # Please verify this is the correct port from your websocket_server.py file.
+      - "5001:5001"
+    # If your python app needs environment variables, add them here
+    # env_file:
+    #   - .env

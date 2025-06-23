@@ -1,0 +1,20 @@
+# --- For FastAPI Web Server (server.py) ---
+fastapi
+uvicorn[standard]
+pydantic
+
+# --- For WebSocket Server (websocket_server.py) ---
+websockets
+
+# --- For RAG and Vector Store (vector_store.py) ---
+# For creating and managing vector embeddings
+sentence-transformers
+# For efficient similarity search (the vector database)
+faiss-cpu
+# For numerical operations, often a dependency for the above
+numpy
+
+# --- For Lexical Analysis / Transpiler ---
+# This is a common library for building lexers/parsers.
+# If your transpiler is pure Python, you can omit this.
+ply
