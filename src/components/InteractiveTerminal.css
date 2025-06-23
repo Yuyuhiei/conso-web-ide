@@ -1,0 +1,124 @@
+/* --- New Status View Design --- */
+.terminal-status-view {
+  padding: 15px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px; /* Space between status lines */
+  height: 100%;
+  animation: fadeIn 0.3s ease;
+}
+
+.status-line {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+.status-icon {
+  margin-right: 12px;
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+}
+
+.status-label {
+  font-weight: bold;
+  color: #aaa;
+  min-width: 90px;
+}
+
+.status-message {
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+/* Status Colors */
+.status-type-success { color: #89d185; }
+.status-type-error { color: #f48771; }
+.status-type-running { color: #649ad1; }
+.status-type-info { color: #cca700; }
+.status-type-pending { color: #888; }
+
+/* --- Console View (your original terminal) --- */
+.terminal-console-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* NEW: Add this class for the xterm container */
+.xterm-container {
+  flex-grow: 1;
+  width: 100%;
+  overflow: hidden;
+  padding: 2px 10px;
+}
+
+/* --- Interactive Terminal Container --- */
+.interactive-terminal-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: #1e1e1e;
+  border-top: 1px solid #333;
+  flex-grow: 1; /* Add this line */
+  min-width: 0;  /* And this for safety */
+}
+
+/* --- Tab Bar --- */
+.terminal-tabs {
+  display: flex;
+  flex-shrink: 0;
+  background-color: #2D2D2D;
+  border-bottom: 1px solid #333;
+  user-select: none;
+}
+
+.tab-button {
+  padding: 8px 16px;
+  font-family: 'Segoe UI', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: #aaa;
+  background-color: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.tab-button:hover {
+  color: #eee;
+}
+
+.tab-button.active {
+  color: #eee;
+  border-bottom-color: #0E639C;
+}
+
+.tab-button:disabled {
+  color: #666;
+  cursor: not-allowed;
+}
+
+/* --- Tab Content Area --- */
+.terminal-content-area {
+  flex-grow: 1;
+  overflow: hidden;
+  background-color: #1e1e1e;
+}
+
+/* --- Animations --- */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1.5s linear infinite;
+}
