@@ -66,6 +66,9 @@ print("CORS middleware added.")
 run_sessions: Dict[str, str] = {}
 print("Run sessions dictionary initialized.")
 
+# Global dictionary to track running processes by their run_id
+running_processes = {}
+
 # --- Request/Response Models ---
 class CodeRequest(BaseModel):
     code: str
@@ -555,6 +558,19 @@ async def websocket_run_endpoint(websocket: WebSocket, run_id: str):
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "message": "Conso Language Server is running"}
+
+@app.post("/api/run/{run_id}/stop")
+async def stop_run(run_id: str):
+    """API endpoint to stop a running process by its ID."""
+    process = running_processes.get(run_id)
+    if process and process.returncode is None:
+        print(f"Termination requested for process {process.pid} with run_id {run_id}")
+        process.terminate()
+        return {"message": f"Stop signal sent to process for run ID {run_id}."}
+    elif process:
+        return {"message": "Process has already terminated."}
+    else:
+        raise HTTPException(status_code=404, detail="No running process found for this run ID.")
 
 # --- Run Server ---
 if __name__ == "__main__":

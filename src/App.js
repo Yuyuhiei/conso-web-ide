@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'; // Import useCallback
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import CodeEditor from './components/NewEditor';
@@ -8,6 +8,7 @@ import Sidebar from './components/Sidebar';
 import TranspiledCodeView from './components/TranspiledCodeView';
 import { prepareRun } from './services/api';
 import websocketService from './services/websocketService';
+import { VscRunAll, VscDebugStop } from 'react-icons/vsc';
 import './App.css';
 
 const STATUS_TYPE = { INFO: 'info', SUCCESS: 'success', ERROR: 'error', RUNNING: 'running', PENDING: 'pending' };
@@ -206,6 +207,26 @@ const MainApp = () => {
     }
   };
 
+  const handleStop = async () => {
+    if (!isRunning || !currentRunId) return;
+
+    try {
+      const response = await fetch(`/api/run/${currentRunId}/stop`, {
+        method: 'POST',
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to stop process.');
+      }
+      // The UI will update fully when the onProcessExit callback is triggered.
+      // We can set an intermediate status here for responsiveness.
+      setExecutionStatus(createStatus("Stopping...", STATUS_TYPE.INFO));
+    } catch (error) {
+      console.error("Error sending stop signal:", error);
+      setExecutionStatus(createStatus(`Stop failed: ${error.message}`, STATUS_TYPE.ERROR));
+    }
+  };
+
   // --- MODIFICATION: Wrap handleProcessExit in useCallback ---
   // Handler for Process Exit (called by InteractiveTerminal)
   const handleProcessExit = useCallback((exitCode) => {
@@ -353,18 +374,41 @@ const MainApp = () => {
            <button onClick={handleSave} title="Save current file (Ctrl+S)" style={{ backgroundColor: '#0E639C', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Save</button>
            <input type="file" id="file-open" accept=".cns,.txt" style={{ display: 'none' }} onChange={handleOpenFromDisk} />
            <button onClick={() => document.getElementById('file-open').click()} title="Open file from disk" style={{ backgroundColor: '#0E639C', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Open</button>
-           <button
-             onClick={handleRun}
-             disabled={!canRun}
-             title={canRun ? "Run the code" : "Cannot run (check syntax or running status)"}
-             style={{
-               backgroundColor: canRun ? '#2e7d32' : '#444',
-               color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px',
-               cursor: canRun ? 'pointer' : 'not-allowed', opacity: canRun ? 1 : 0.6
-             }}
-           >
-             {isRunning ? 'Running...' : 'Run'}
-           </button>
+           
+           {/* --- MODIFIED RUN/STOP BUTTON --- */}
+           {!isRunning ? (
+             <button
+               onClick={handleRun}
+               disabled={!canRun}
+               title={canRun ? "Run the code" : "Cannot run (check syntax or running status)"}
+               style={{
+                 backgroundColor: canRun ? '#2e7d32' : '#444',
+                 color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px',
+                 cursor: canRun ? 'pointer' : 'not-allowed', opacity: canRun ? 1 : 0.6,
+                 display: 'flex', alignItems: 'center', gap: '6px'
+               }}
+             >
+               <VscRunAll />
+               <span>Run</span>
+             </button>
+           ) : (
+             <button
+               onClick={handleStop}
+               title="Stop the running process"
+               className="stop-button"
+               style={{
+                 backgroundColor: '#d13438',
+                 color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px',
+                 cursor: 'pointer',
+                 display: 'flex', alignItems: 'center', gap: '6px'
+               }}
+             >
+               <VscDebugStop />
+               <span>Stop</span>
+             </button>
+           )}
+           {/* --- END MODIFIED BUTTON --- */}
+           
            <button onClick={() => setShowTranspiledCode(true)} disabled={!transpiledCode} title={transpiledCode ? "View generated C code" : "No C code generated yet"} style={{ backgroundColor: transpiledCode ? '#4a148c' : '#444', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: transpiledCode ? 'pointer' : 'not-allowed', opacity: transpiledCode ? 1 : 0.6 }}>
              View C
            </button>
