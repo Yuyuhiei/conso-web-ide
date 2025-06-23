@@ -373,63 +373,69 @@ const MainApp = () => {
   return (
     <div className="app-container" data-theme={currentTheme} style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       {/* Header */}
-      <header className="app-header" style={{ display: 'flex', alignItems: 'center', backgroundColor: '#252526', padding: '0 10px', borderBottom: '1px solid #333', flexShrink: 0 }}>
+      <header className="app-header">
         {/* Logo and Title */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <img src="/assets/revamped_cnslogo.svg" alt="Conso Logo" style={{ height: '32px', width: 'auto' }} />
-          <div className="app-title" style={{ fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: '20px', fontWeight: 'bold', padding: '10px 0', marginRight: '20px', color: '#ccc' }}>
+        <div className="header-left">
+          <img src="/assets/revamped_cnslogo.svg" alt="Conso Logo" />
+          <div className="app-title">
             CNS Compiler
           </div>
         </div>
         {/* Current File Name */}
-        <div className="file-name-container" style={{ flexGrow: 1, textAlign: 'center', color: '#aaa' }}>
+        <div className="file-name-container">
           <span>{currentFile?.name || 'No file selected'}</span>
         </div>
         {/* Controls */}
         <div className="app-controls">
-           <button onClick={handleSave} title="Save current file (Ctrl+S)" className="control-button primary">
-             <VscSave />
-             <span>Save</span>
-           </button>
-           <input type="file" id="file-open" accept=".cns,.txt" style={{ display: 'none' }} onChange={handleOpenFromDisk} />
-           <button onClick={() => document.getElementById('file-open').click()} title="Open file from disk" className="control-button">
-             <VscFolder />
-             <span>Open</span>
-           </button>
-           
-           {!isRunning ? (
-             <button
-               onClick={handleRun}
-               disabled={!canRun}
-               title={canRun ? "Run the code" : "Cannot run (check syntax or running status)"}
-               className="control-button success"
-             >
-               <VscRunAll />
-               <span>Run</span>
+           <div className="control-group">
+             <button onClick={handleSave} title="Save current file (Ctrl+S)" className="control-button primary">
+               <VscSave />
+               <span>Save</span>
              </button>
-           ) : (
-             <button
-               onClick={handleStop}
-               title="Stop the running process"
-               className="control-button danger"
-             >
-               <VscDebugStop />
-               <span>Stop</span>
+             <input type="file" id="file-open" accept=".cns,.txt" style={{ display: 'none' }} onChange={handleOpenFromDisk} />
+             <button onClick={() => document.getElementById('file-open').click()} title="Open file from disk" className="control-button">
+               <VscFolder />
+               <span>Open</span>
              </button>
-           )}
+           </div>
            
-           <button onClick={() => setShowTranspiledCode(true)} disabled={!transpiledCode} title={transpiledCode ? "View generated C code" : "No C code generated yet"} className="control-button special">
-             <VscEye />
-             <span>View C</span>
-           </button>
-           <button onClick={saveTranspiledCode} disabled={!transpiledCode} title={transpiledCode ? "Save generated C code" : "No C code generated yet"} className="control-button warning">
-             <VscCloudDownload />
-             <span>Save C</span>
-           </button>
-           <button onClick={clearTerminal} title="Clear terminal messages" className="control-button danger">
-             <VscTrash />
-             <span>Clear</span>
-           </button>
+           <div className="control-group">
+             {!isRunning ? (
+               <button
+                 onClick={handleRun}
+                 disabled={!canRun}
+                 title={canRun ? "Run the code" : "Cannot run (check syntax or running status)"}
+                 className="control-button success"
+               >
+                 <VscRunAll />
+                 <span>Run</span>
+               </button>
+             ) : (
+               <button
+                 onClick={handleStop}
+                 title="Stop the running process"
+                 className="control-button danger"
+               >
+                 <VscDebugStop />
+                 <span>Stop</span>
+               </button>
+             )}
+             <button onClick={clearTerminal} title="Clear terminal messages" className="control-button danger">
+               <VscTrash />
+               <span>Clear</span>
+             </button>
+           </div>
+           
+           <div className="control-group">
+             <button onClick={() => setShowTranspiledCode(true)} disabled={!transpiledCode} title={transpiledCode ? "View generated C code" : "No C code generated yet"} className="control-button special">
+               <VscEye />
+               <span>View C</span>
+             </button>
+             <button onClick={saveTranspiledCode} disabled={!transpiledCode} title={transpiledCode ? "Save generated C code" : "No C code generated yet"} className="control-button warning">
+               <VscCloudDownload />
+               <span>Save C</span>
+             </button>
+           </div>
         </div>
       </header>
 

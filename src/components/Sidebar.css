@@ -31,14 +31,15 @@
 }
 
 .sidebar-section-header {
-  padding: 10px 15px;
+  padding: 10px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background-color: #2D2D2D;
   cursor: pointer;
+  background-color: #2a2d2e;
   user-select: none;
-  transition: background-color 0.2s ease;
+  text-decoration: none; /* Add this */
+  color: inherit;         /* And this */
 }
 
 .sidebar-section-header:hover {

@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import FileExplorer from './FileExplorer';
 import ThemeSelector from './ThemeSelector';
-import { VscFiles, VscColorMode } from 'react-icons/vsc';
+import { VscFiles, VscColorMode, VscBook } from 'react-icons/vsc';
 import './Sidebar.css';
 
 const Sidebar = ({
@@ -138,6 +138,21 @@ const Sidebar = ({
             />
           </div>
         )}
+      </div>
+      
+      {/* Documentation Section */}
+      <div className="sidebar-section">
+        <a 
+          href="/Conso_PL.pdf"
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="sidebar-section-header"
+        >
+          <div className="section-title-container">
+            <VscBook />
+            <span>DOCUMENTATION</span>
+          </div>
+        </a>
       </div>
     </div>
   );
