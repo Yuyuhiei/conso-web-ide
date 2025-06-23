@@ -1,7 +1,7 @@
 // WebSocket service for real-time communication with the server
 
 class WebSocketService {
-  constructor(url = 'ws://localhost:5001/ws') {
+  constructor(url = process.env.REACT_APP_WEBSOCKET_URL || 'ws://localhost:5001/ws') {
     this.url = url;
     this.socket = null;
     this.isConnected = false;
