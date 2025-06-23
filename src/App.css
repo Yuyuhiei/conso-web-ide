@@ -30,40 +30,89 @@
   color: white;
 }
 
+/* --- Button Redesign --- */
 .app-controls {
   display: flex;
-  gap: 10px;
+  align-items: center;
+  gap: 8px; /* Provides consistent spacing between buttons */
 }
 
-.app-controls button {
-  border: none;
-  padding: 6px 12px;
-  border-radius: 4px;
+.control-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px; /* Space between icon and text */
+  padding: 6px 14px;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid #555555;
+  border-radius: 5px;
   cursor: pointer;
-  color: white;
+  transition: all 0.2s ease-in-out;
+  color: #EAEAEA;
+  background-color: #3C3C3C; /* Neutral dark gray */
+  white-space: nowrap; /* Prevent text wrapping */
 }
 
-.app-controls button:not(.semantic-button, .clear-button) {
-  background-color: #0E639C;
+.control-button:hover:not(:disabled) {
+  background-color: #4F4F4F;
+  border-color: #6E6E6E;
+  transform: translateY(-1px); /* Subtle lift effect */
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
-.app-controls .semantic-button {
-  background-color: #0d47a1;
+.control-button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: none;
 }
 
-.app-controls .semantic-button:disabled {
-  background-color: #444;
+.control-button:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
-  opacity: 0.7;
 }
 
-.app-controls .clear-button {
-  background-color: #f44336;
+/* Color Modifiers */
+.control-button.primary {
+  background-color: #0E639C;
+  border-color: #157ECB;
+}
+.control-button.primary:hover:not(:disabled) {
+  background-color: #157ECB;
 }
 
-.app-controls .stop-button {
-  background-color: #d13438 !important; /* Use !important to override inline styles if needed */
+.control-button.success {
+  background-color: #2e7d32;
+  border-color: #43A047;
 }
+.control-button.success:hover:not(:disabled) {
+  background-color: #388E3C;
+}
+
+.control-button.danger {
+  background-color: #d13438;
+  border-color: #E53935;
+}
+.control-button.danger:hover:not(:disabled) {
+  background-color: #C62828;
+}
+
+.control-button.warning {
+  background-color: #ef6c00;
+  border-color: #FB8C00;
+}
+.control-button.warning:hover:not(:disabled) {
+  background-color: #F57C00;
+}
+
+.control-button.special {
+  background-color: #4a148c;
+  border-color: #6A1B9A;
+}
+.control-button.special:hover:not(:disabled) {
+  background-color: #5E35B1;
+}
+/* --- End Button Redesign --- */
 
 /* Sidebar styles */
 .sidebar {

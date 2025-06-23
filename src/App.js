@@ -8,7 +8,7 @@ import Sidebar from './components/Sidebar';
 import TranspiledCodeView from './components/TranspiledCodeView';
 import { prepareRun } from './services/api';
 import websocketService from './services/websocketService';
-import { VscRunAll, VscDebugStop } from 'react-icons/vsc';
+import { VscRunAll, VscDebugStop, VscSave, VscFolder, VscEye, VscCloudDownload, VscTrash } from 'react-icons/vsc';
 import './App.css';
 
 const STATUS_TYPE = { INFO: 'info', SUCCESS: 'success', ERROR: 'error', RUNNING: 'running', PENDING: 'pending' };
@@ -386,23 +386,23 @@ const MainApp = () => {
           <span>{currentFile?.name || 'No file selected'}</span>
         </div>
         {/* Controls */}
-        <div className="app-controls" style={{ display: 'flex', gap: '8px', padding: '5px 0' }}>
-           <button onClick={handleSave} title="Save current file (Ctrl+S)" style={{ backgroundColor: '#0E639C', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Save</button>
+        <div className="app-controls">
+           <button onClick={handleSave} title="Save current file (Ctrl+S)" className="control-button primary">
+             <VscSave />
+             <span>Save</span>
+           </button>
            <input type="file" id="file-open" accept=".cns,.txt" style={{ display: 'none' }} onChange={handleOpenFromDisk} />
-           <button onClick={() => document.getElementById('file-open').click()} title="Open file from disk" style={{ backgroundColor: '#0E639C', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Open</button>
+           <button onClick={() => document.getElementById('file-open').click()} title="Open file from disk" className="control-button">
+             <VscFolder />
+             <span>Open</span>
+           </button>
            
-           {/* --- MODIFIED RUN/STOP BUTTON --- */}
            {!isRunning ? (
              <button
                onClick={handleRun}
                disabled={!canRun}
                title={canRun ? "Run the code" : "Cannot run (check syntax or running status)"}
-               style={{
-                 backgroundColor: canRun ? '#2e7d32' : '#444',
-                 color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px',
-                 cursor: canRun ? 'pointer' : 'not-allowed', opacity: canRun ? 1 : 0.6,
-                 display: 'flex', alignItems: 'center', gap: '6px'
-               }}
+               className="control-button success"
              >
                <VscRunAll />
                <span>Run</span>
@@ -411,27 +411,25 @@ const MainApp = () => {
              <button
                onClick={handleStop}
                title="Stop the running process"
-               className="stop-button"
-               style={{
-                 backgroundColor: '#d13438',
-                 color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px',
-                 cursor: 'pointer',
-                 display: 'flex', alignItems: 'center', gap: '6px'
-               }}
+               className="control-button danger"
              >
                <VscDebugStop />
                <span>Stop</span>
              </button>
            )}
-           {/* --- END MODIFIED BUTTON --- */}
            
-           <button onClick={() => setShowTranspiledCode(true)} disabled={!transpiledCode} title={transpiledCode ? "View generated C code" : "No C code generated yet"} style={{ backgroundColor: transpiledCode ? '#4a148c' : '#444', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: transpiledCode ? 'pointer' : 'not-allowed', opacity: transpiledCode ? 1 : 0.6 }}>
-             View C
+           <button onClick={() => setShowTranspiledCode(true)} disabled={!transpiledCode} title={transpiledCode ? "View generated C code" : "No C code generated yet"} className="control-button special">
+             <VscEye />
+             <span>View C</span>
            </button>
-           <button onClick={saveTranspiledCode} disabled={!transpiledCode} title={transpiledCode ? "Save generated C code" : "No C code generated yet"} style={{ backgroundColor: transpiledCode ? '#ef6c00' : '#444', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: transpiledCode ? 'pointer' : 'not-allowed', opacity: transpiledCode ? 1 : 0.6 }}>
-             Save C
+           <button onClick={saveTranspiledCode} disabled={!transpiledCode} title={transpiledCode ? "Save generated C code" : "No C code generated yet"} className="control-button warning">
+             <VscCloudDownload />
+             <span>Save C</span>
            </button>
-           <button onClick={clearTerminal} title="Clear terminal messages" style={{ backgroundColor: '#f44336', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer' }}>Clear</button>
+           <button onClick={clearTerminal} title="Clear terminal messages" className="control-button danger">
+             <VscTrash />
+             <span>Clear</span>
+           </button>
         </div>
       </header>
 
