@@ -1,10 +1,12 @@
 import React, { useState, useRef } from 'react';
 import FileExplorer from './FileExplorer';
 import ThemeSelector from './ThemeSelector';
+import { VscFiles, VscColorMode } from 'react-icons/vsc';
+import './Sidebar.css';
 
 const Sidebar = ({
   files,
-  currentFile,
+  currentFileId,
   onFileSelect,
   onFileCreate,
   onFileRename,
@@ -78,31 +80,13 @@ const Sidebar = ({
   return (
     <div 
       className="sidebar"
-      style={{
-        width: `${width}px`,
-        height: '100%',
-        backgroundColor: '#252526',
-        borderRight: '1px solid #333',
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'relative',
-        zIndex: 10
-      }}
+      style={{ width: `${width}px` }}
     >
       {/* Resize handle */}
       {resizable && (
         <div 
           ref={resizeHandleRef}
           className="resize-handle"
-          style={{
-            position: 'absolute',
-            top: 0,
-            right: 0,
-            width: '5px',
-            height: '100%',
-            cursor: 'ew-resize',
-            zIndex: 20
-          }}
         />
       )}
       
@@ -111,25 +95,19 @@ const Sidebar = ({
         <div 
           className="sidebar-section-header"
           onClick={() => toggleSection('files')}
-          style={{
-            padding: '8px 10px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            backgroundColor: '#2D2D2D',
-            cursor: 'pointer',
-            userSelect: 'none'
-          }}
         >
-          <span style={{ fontWeight: 'bold' }}>FILES</span>
-          <span>{expandedSections.files ? '▼' : '▶'}</span>
+          <div className="section-title-container">
+            <VscFiles />
+            <span>FILES</span>
+          </div>
+          <span className={`section-toggle-icon ${expandedSections.files ? 'expanded' : ''}`}>▶</span>
         </div>
         
         {expandedSections.files && (
-          <div className="sidebar-section-content" style={{ padding: '8px 0' }}>
+          <div className="sidebar-section-content">
             <FileExplorer 
               files={files}
-              currentFile={currentFile}
+              currentFileId={currentFileId}
               onFileSelect={onFileSelect}
               onFileCreate={onFileCreate}
               onFileRename={onFileRename}
@@ -144,22 +122,16 @@ const Sidebar = ({
         <div 
           className="sidebar-section-header"
           onClick={() => toggleSection('themes')}
-          style={{
-            padding: '8px 10px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            backgroundColor: '#2D2D2D',
-            cursor: 'pointer',
-            userSelect: 'none'
-          }}
         >
-          <span style={{ fontWeight: 'bold' }}>THEMES</span>
-          <span>{expandedSections.themes ? '▼' : '▶'}</span>
+          <div className="section-title-container">
+            <VscColorMode />
+            <span>THEMES</span>
+          </div>
+          <span className={`section-toggle-icon ${expandedSections.themes ? 'expanded' : ''}`}>▶</span>
         </div>
         
         {expandedSections.themes && (
-          <div className="sidebar-section-content" style={{ padding: '8px 0' }}>
+          <div className="sidebar-section-content">
             <ThemeSelector
               currentTheme={currentTheme}
               onThemeChange={onThemeChange}
