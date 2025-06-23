@@ -1,13 +1,14 @@
 import React, { useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { configureConsoLanguage } from '../utils/consoLanguageConfig';
-import { registerMonacoThemes } from '../utils/themes'; // Import theme registration
+import { registerMonacoThemes } from '../utils/themes';
+import './NewEditor.css'; // Import the new CSS file
 
-const CodeEditor = ({ 
+const NewEditor = ({ 
   value, 
   onChange, 
   onSave,
-  theme = 'conso-dark'  // Add theme prop with default
+  theme = 'conso-dark'
 }) => {
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
@@ -40,6 +41,10 @@ const CodeEditor = ({
       fontFamily: 'Consolas, "Courier New", monospace',
       fontSize: 16,
       lineHeight: 24,
+      padding: {
+        top: 10,
+        bottom: 10
+      },
     });
   };
   
@@ -58,7 +63,7 @@ const CodeEditor = ({
   }, [theme]);
   
   return (
-    <div className="editor-container" style={{ height: "100%", width: "100%" }}>
+    <div className="editor-container">
       <Editor
         height="100%"
         width="100%"
@@ -66,22 +71,29 @@ const CodeEditor = ({
         defaultValue={value}
         onChange={onChange}
         onMount={handleEditorDidMount}
-        theme={'vs-dark'} // Use a built-in dark theme initially to prevent light flash
+        theme={theme} // Use the theme prop directly
         options={{
           selectOnLineNumbers: true,
           roundedSelection: false,
           readOnly: false,
           cursorStyle: 'line',
           automaticLayout: true,
-          tabSize: 4,
-          fontSize: 16,
-          minimap: { enabled: true },
+          glyphMargin: false,
+          folding: false,
+          lineNumbersMinChars: 3,
+          minimap: { enabled: true, side: 'right' },
           scrollBeyondLastLine: false,
           wordWrap: 'on',
+          scrollbar: {
+            verticalScrollbarSize: 8,
+            horizontalScrollbarSize: 8,
+            arrowSize: 12,
+            useShadows: false,
+          }
         }}
       />
     </div>
   );
 };
 
-export default CodeEditor;
+export default NewEditor;

@@ -1,0 +1,27 @@
+/* Style the container holding the editor */
+.editor-container {
+  height: 100%;
+  width: 100%;
+  overflow: hidden; /* Ensures the editor's rounded corners are visible */
+  border-radius: 6px; /* Softens the edges */
+  border: 1px solid #333; /* Adds a subtle border */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2); /* Adds depth */
+}
+
+/* Custom scrollbar styling for Monaco Editor to match the dark theme */
+.editor-container .monaco-editor .scrollbar {
+  background: rgba(40, 40, 40, 0.8); /* Darker background for the scrollbar track */
+}
+
+.editor-container .monaco-editor .scrollbar .slider {
+  background: rgba(100, 100, 100, 0.5); /* The draggable part of the scrollbar */
+  border-radius: 4px;
+}
+
+.editor-container .monaco-editor .scrollbar .slider:hover {
+  background: rgba(120, 120, 120, 0.7);
+}
+
+.editor-container .monaco-editor .scrollbar .slider:active {
+  background: rgba(140, 140, 140, 0.9);
+}

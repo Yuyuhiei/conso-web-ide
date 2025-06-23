@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { VscNewFile, VscEdit, VscTrash } from 'react-icons/vsc';
+import './FileExplorer.css'; // Import the new CSS file
 
 const FileExplorer = ({
   files,
@@ -27,12 +29,10 @@ const FileExplorer = ({
     e.preventDefault();
     
     if (newFileName.trim()) {
-      // Make sure file has .cns extension
       let name = newFileName.trim();
       if (!name.endsWith('.cns')) {
         name += '.cns';
       }
-      
       onFileRename(editingFile, name);
     }
     
@@ -54,12 +54,10 @@ const FileExplorer = ({
     e.preventDefault();
     
     if (newFileInput.trim()) {
-      // Make sure file has .cns extension
       let name = newFileInput.trim();
       if (!name.endsWith('.cns')) {
         name += '.cns';
       }
-      
       onFileCreate(name);
     }
     
@@ -76,126 +74,77 @@ const FileExplorer = ({
 
   return (
     <div className="file-explorer">
-      <div 
-        className="file-explorer-actions" 
-        style={{ 
-          padding: '0 10px 8px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          borderBottom: '1px solid #333'
-        }}
-      >
+      <div className="file-explorer-header">
         <button 
           onClick={handleCreateNewFile}
-          style={{
-            backgroundColor: '#0E639C',
-            color: 'white',
-            border: 'none',
-            padding: '4px 8px',
-            borderRadius: '2px',
-            cursor: 'pointer',
-            fontSize: '12px'
-          }}
+          className="new-file-button"
         >
-          New File
+          <VscNewFile />
+          <span>New File</span>
         </button>
         
-        <span style={{ color: '#888', fontSize: '12px' }}>
+        <span className="file-count">
           {files.length} / 30 files
         </span>
       </div>
       
       {/* New file input */}
       {isCreatingNew && (
-        <div style={{ padding: '8px 10px', borderBottom: '1px solid #333' }}>
+        <div className="new-file-input-wrapper">
           <form onSubmit={handleNewFileSubmit}>
             <input
               type="text"
               value={newFileInput}
               onChange={handleNewFileChange}
+              onBlur={() => setIsCreatingNew(false)} // Hide on blur
               placeholder="filename.cns"
               autoFocus
-              style={{
-                width: '100%',
-                backgroundColor: '#3C3C3C',
-                color: 'white',
-                border: '1px solid #0E639C',
-                padding: '4px',
-                outline: 'none',
-                fontSize: '12px'
-              }}
+              className="file-input"
             />
           </form>
         </div>
       )}
       
       {/* Files list */}
-      <div className="file-list" style={{ overflowY: 'auto' }}>
-        {files.length === 0 ? (
-          <div style={{ padding: '10px', color: '#888', fontSize: '12px', fontStyle: 'italic' }}>
-            No files. Create a new file to get started.
+      <div className="file-list">
+        {files.length === 0 && !isCreatingNew ? (
+          <div className="empty-list-message">
+            No files. Create one to start.
           </div>
         ) : (
           files.map(file => (
             <div 
               key={file.id}
               className={`file-item ${currentFile && currentFile.id === file.id ? 'active' : ''}`}
-              style={{
-                padding: '6px 10px',
-                cursor: 'pointer',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                backgroundColor: currentFile && currentFile.id === file.id ? '#37373D' : 'transparent',
-                borderLeft: currentFile && currentFile.id === file.id ? '2px solid #0E639C' : '2px solid transparent',
-                paddingLeft: currentFile && currentFile.id === file.id ? '8px' : '10px'
-              }}
+              onClick={() => editingFile !== file.id && onFileSelect(file.id)}
             >
               {editingFile === file.id ? (
-                <form onSubmit={handleRenameSubmit} style={{ flex: 1 }}>
+                <form onSubmit={handleRenameSubmit} className="file-rename-form">
                   <input
                     type="text"
                     value={newFileName}
                     onChange={handleRenameChange}
+                    onBlur={handleRenameSubmit} // Submit on blur
                     autoFocus
-                    style={{
-                      width: '100%',
-                      backgroundColor: '#3C3C3C',
-                      color: 'white',
-                      border: '1px solid #0E639C',
-                      padding: '2px 4px',
-                      outline: 'none',
-                      fontSize: '12px'
-                    }}
+                    className="file-input"
                   />
                 </form>
               ) : (
                 <>
-                  <div 
-                    className="file-name" 
-                    onClick={() => onFileSelect(file.id)}
-                    style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                  >
+                  <div className="file-name">
                     {file.name}
                   </div>
                   
-                  <div className="file-actions" style={{ display: 'flex', gap: '4px' }}>
+                  <div className="file-item-actions">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleRenameStart(file);
                       }}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#CCC',
-                        cursor: 'pointer',
-                        padding: '2px',
-                        fontSize: '10px'
-                      }}
+                      className="action-button"
                       title="Rename file"
                     >
-                      ✏️
+                      <VscEdit />
                     </button>
                     
                     <button
@@ -203,17 +152,10 @@ const FileExplorer = ({
                         e.stopPropagation();
                         handleDeleteFile(file.id);
                       }}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#CCC',
-                        cursor: 'pointer',
-                        padding: '2px',
-                        fontSize: '10px'
-                      }}
+                      className="action-button delete-button"
                       title="Delete file"
                     >
-                      🗑️
+                      <VscTrash />
                     </button>
                   </div>
                 </>
