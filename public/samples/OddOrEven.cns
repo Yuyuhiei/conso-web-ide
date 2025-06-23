@@ -1,0 +1,14 @@
+mn() {
+    nt number;
+
+    # Ask user for input
+    number = npt("Enter an integer: ");
+
+    # Check if even or odd 
+    f (number % 2 == 0) {
+        prnt(number, "is even.\n"); 
+    }ls { 
+        prnt(number, "is odd.\n");
+    }
+    end; 
+}

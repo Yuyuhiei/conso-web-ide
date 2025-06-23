@@ -1,0 +1,13 @@
+fnctn nt factorial(nt n) {
+    f (n == 0) {
+        rtrn 1;  
+    }  
+    rtrn n * factorial(n - 1);  
+}
+
+mn(){     
+        nt input;   
+        input = npt("Enter a number for factorial: ");  
+        prnt(factorial(input));   
+        end;  
+}

@@ -1,0 +1,24 @@
+mn() {
+    nt num;
+ 
+    # Ask the user for input
+    num = npt("Enter an integer:"); 
+
+    # Check the type of the number     
+    f (num > 0) { 
+        f (num % 2 == 0) { 
+            prnt("The number is an even positive number.", "\n");
+        }ls{ 
+            prnt("The number is an odd positive number.", "\n");
+        }
+    }lsf(num < 0) {
+        f(num % 2 == 0) {
+            prnt("The number is an even negative number.", "\n");
+        }ls{
+            prnt("The number is an odd negative number.", "\n");
+        }
+    }ls{
+        prnt("The number is zero, which is even but neither positive nor negative.","\n");
+    }
+    end; 
+}

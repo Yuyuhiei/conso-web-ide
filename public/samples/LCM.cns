@@ -1,0 +1,27 @@
+mn() {
+    nt num1, num2, max;
+    nt foundLCM = 0; 
+  
+    # Input two numbers
+    num1 = npt("Enter the first number: ");
+    num2 = npt("Enter the second number: ");
+
+    # Set max to the greater of num1 and num2
+    f(num1 > num2) {
+        max = num1;  
+    }ls{
+        max = num2;  
+    }
+
+    # Loop to find LCM 
+     whl(foundLCM == 0) {
+        f((max % num1 == 0) && (max % num2 == 0)) {
+            prnt("LCM of", num1, "and", num2, "is", max);    
+            foundLCM = 1;
+        }
+        ls{
+            max++;
+        } 
+    }
+    end; 
+}

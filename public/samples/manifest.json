@@ -1,0 +1,17 @@
+[
+  "BinaryToDec.cns",
+  "DecToBinary.cns",
+  "Factorial.cns",
+  "Fibonacci.cns",
+  "GCD.cns",
+  "LCM.cns",
+  "LeapYear.cns",
+  "OddEvenPosNeg.cns",
+  "OddOrEven.cns",
+  "Palindrome.cns",
+  "PerfectNumbers1_100.cns",
+  "Reversed.cns",
+  "SquareOfNumbers.cns",
+  "Vowel.cns",
+  "MultiplicationTable.cns"
+]

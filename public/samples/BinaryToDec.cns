@@ -1,0 +1,33 @@
+mn() {
+    chr binary[100]; 
+         
+    nt decimal = 0;       
+    nt length = 6;  # Length of the hardcoded binary string "1101" 
+    nt i = 0; 
+    nt power = 0; 
+    nt result = 1;  
+    nt j = 0;  
+
+    binary = npt("Enter a binary");
+        
+    # Calculate decimal from binary 
+    power = length - 1;
+     
+    whl (i < length) { 
+        f (binary[i] == '1') {
+            result = 1;
+            j = 0;
+            whl (j < power) {
+                result *= 2;
+                j++;
+            }
+            decimal += result;
+        }
+        i++;
+        power--;
+    }
+    
+    prnt("Decimal:", decimal);  # Print the result (decimal value)
+    
+    end;
+}

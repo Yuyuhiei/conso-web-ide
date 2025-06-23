@@ -1,0 +1,25 @@
+mn(){
+    nt n, m, mul = 0, i = 0, j = 0, nul;  
+                                                                   
+    n = npt("Enter the first matrix (n): ");                  
+    m = npt("Enter the second matrix (m): ");                                          
+            
+    f((n <= 0) || (m <= 0)){                                  
+        prnt("Please enter a positive integer: ");            
+    }ls{                      
+        fr(i = 0; i <= m; i++){                                              
+            fr(j = 0; j <= n; j++){            
+                mul = j + i * j;                   
+                f((mul > 9) && (mul < 100)){             
+                    prnt(mul, "   ");                          
+                }lsf(mul > 99){                        
+                    prnt(mul, "  ");                     
+                }ls{               
+                    prnt(mul, "    ");              
+                }             
+            }             
+            prnt("\n");  
+        }                           
+    }        
+    end;  
+} 

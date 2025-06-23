@@ -1,0 +1,14 @@
+mn() {
+    nt num, reversed = 0;
+
+    num = npt("Enter an integer: ");   
+    
+    whl (num != 0) {
+        reversed = reversed * 10 + num % 10;
+        num /= 10;  
+    }  
+    
+    prnt("Reversed number:", reversed);  
+
+    end;
+}

@@ -301,6 +301,9 @@ const MainApp = () => {
       setTranspiledCode('');
       interactiveTerminalRef.current?.clearTerminal();
   };
+
+  // --- File Management Handlers ---
+
   const handleFileSelect = (fileId) => {
     if (fileId !== currentFileId) {
         setCurrentFileId(fileId);
@@ -309,6 +312,28 @@ const MainApp = () => {
         setSyntaxValid(false); setTranspiledCode(''); setTokens([]);
     }
    };
+
+  // Add this handler to manage loading sample programs
+  const handleSampleSelect = (sample) => {
+    // Check if a file with the same name already exists in the file explorer
+    const existingFile = files.find(f => f.name === sample.name);
+
+    if (existingFile) {
+      // If it exists, just make it the active file
+      setCurrentFileId(existingFile.id);
+    } else {
+      // If it's a new sample, create a new file object for it
+      const newFile = {
+        id: `sample-${Date.now()}`, // Give it a unique ID
+        name: sample.name,
+        content: sample.content,
+      };
+      // Add the new file to the list and make it active
+      setFiles(prevFiles => [...prevFiles, newFile]);
+      setCurrentFileId(newFile.id);
+    }
+  };
+
   const handleFileCreate = (name) => {
     if (files.length >= 30) { alert('Maximum of 30 files reached.'); return; }
     const newFile = { id: uuidv4(), name: name, content: '' };
@@ -441,7 +466,6 @@ const MainApp = () => {
 
       {/* Main Content Area */}
       <div className="main-content" style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden', position: 'relative' }}>
-        {/* Sidebar */}
         <Sidebar
           files={files}
           currentFileId={currentFileId}
@@ -451,52 +475,52 @@ const MainApp = () => {
           onFileDelete={handleFileDelete}
           currentTheme={currentTheme}
           onThemeChange={handleThemeChange}
-          resizable={true}
+          onSampleSelect={handleSampleSelect} // Pass the new handler here
         />
+        <div className="editor-and-terminal-wrapper" style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <div className="editor-pane" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            {/* Editor container */}
+            <div className="editor-container" style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+              <CodeEditor
+                key={currentFileId} // Ensure editor remounts on file change if needed
+                value={currentFile?.content || ''}
+                onChange={handleCodeChange}
+                onSave={handleSave}
+                theme={currentTheme}
+                editorRef={editorRef} // Pass ref if needed by CodeEditor internally
+              />
+              <TokenTable tokens={tokens} />
+            </div>
 
-        {/* Editor and Terminal Area */}
-        <div className="editor-terminal-container" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-          {/* Editor container */}
-          <div className="editor-container" style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-            <CodeEditor
-              key={currentFileId} // Ensure editor remounts on file change if needed
-              value={currentFile?.content || ''}
-              onChange={handleCodeChange}
-              onSave={handleSave}
-              theme={currentTheme}
-              editorRef={editorRef} // Pass ref if needed by CodeEditor internally
+            {/* Resizer for Terminal Panel */}
+            <div
+              className="terminal-panel-resizer"
+              style={{
+                height: '1px', // Height of the draggable area
+                width: '100%',
+                backgroundColor: '#333', // A slightly different color for the resizer
+                cursor: 'ns-resize', // North-South resize cursor
+                flexShrink: 0, // Prevent this from shrinking
+                userSelect: 'none', // Prevent text selection on the handle
+              }}
+              onMouseDown={handleMouseDownOnTerminalResizer}
             />
-            <TokenTable tokens={tokens} />
-          </div>
 
-          {/* Resizer for Terminal Panel */}
-          <div
-            className="terminal-panel-resizer"
-            style={{
-              height: '1px', // Height of the draggable area
-              width: '100%',
-              backgroundColor: '#333', // A slightly different color for the resizer
-              cursor: 'ns-resize', // North-South resize cursor
-              flexShrink: 0, // Prevent this from shrinking
-              userSelect: 'none', // Prevent text selection on the handle
-            }}
-            onMouseDown={handleMouseDownOnTerminalResizer}
-          />
-
-          {/* InteractiveTerminal */}
-          <div className="terminal-wrapper" style={{ height: `${terminalPanelHeight}px`, flexShrink: 0, display: 'flex', backgroundColor: '#1e1e1e' /* Ensure bg color */ }}>
-            <InteractiveTerminal
-                ref={interactiveTerminalRef}
-                lexicalStatus={lexicalStatus}
-                syntaxStatus={syntaxStatus}
-                semanticStatus={semanticStatus}
-                executionStatus={executionStatus}
-                runId={currentRunId}
-                websocketUrl={interactiveWsUrl}
-                onProcessExit={handleProcessExit} // Pass the memoized callback
-                isRunning={isRunning}
-                transpiledCode={transpiledCode}
-            />
+            {/* InteractiveTerminal */}
+            <div className="terminal-wrapper" style={{ height: `${terminalPanelHeight}px`, flexShrink: 0, display: 'flex', backgroundColor: '#1e1e1e' /* Ensure bg color */ }}>
+              <InteractiveTerminal
+                  ref={interactiveTerminalRef}
+                  lexicalStatus={lexicalStatus}
+                  syntaxStatus={syntaxStatus}
+                  semanticStatus={semanticStatus}
+                  executionStatus={executionStatus}
+                  runId={currentRunId}
+                  websocketUrl={interactiveWsUrl}
+                  onProcessExit={handleProcessExit} // Pass the memoized callback
+                  isRunning={isRunning}
+                  transpiledCode={transpiledCode}
+              />
+            </div>
           </div>
         </div>
       </div>

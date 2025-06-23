@@ -1,0 +1,29 @@
+mn() {
+    nt n, i;
+    nt first = 0, second = 1, next; 
+ 
+    # Ask the user for the number of terms    
+    n = npt("Enter the number of terms:");   
+           
+    # Validate input        
+    f (n <= 0) {   
+        prnt("Please enter a positive integer.", "\n");  
+    }  
+    ls{   
+        prnt("Fibonacci Sequence:", "\n");  
+        fr(i = 0; i < n; i++) { 
+            f(i == 0) {   
+                prnt(first, " ");
+            }lsf(i == 1) {   
+                prnt(second, " ");  
+            }ls{ 
+                next = first + second;
+                prnt(next, " ");  
+                first = second; 
+                second = next; 
+            }
+        }
+        prnt("\n");
+    }
+    end; 
+}

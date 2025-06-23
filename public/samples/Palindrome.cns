@@ -1,0 +1,27 @@
+mn() {
+    chr str[100]; 
+    nt i = 0, len = 0, isPal = 1; 
+
+    str = npt("Enter a word: ");  
+
+    # Calculate length manually 
+    whl(str[len] != '\0') {      
+        len = len + 1;     
+    }      
+
+    # Check if palindrome    
+    whl(i < (len / 2)) { 
+        f (str[i] != str[len - 1 - i]) {
+            isPal = 0;
+        } 
+        i = i + 1;
+    }
+
+    f (isPal == 1) {
+        prnt("The string is a palindrome.\n");
+    } ls {
+        prnt("The string is not a palindrome.\n");
+    } 
+
+    end;
+}

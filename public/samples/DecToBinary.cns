@@ -1,0 +1,34 @@
+mn() {
+    nt decimal;  
+    nt binary[32];
+    nt index = 0;  
+    nt done = 0;   
+    # Get input 
+    decimal = npt("Enter a decimal number: ");
+  
+    # Edge case for 0
+    f (decimal == 0) {
+        prnt("Binary: 0\n");
+    }ls{ 
+        # Convert to binary 
+        whl (done == 0) {
+            binary[index] = decimal % 2;
+            decimal = decimal / 2;
+            index++;
+
+            f (decimal == 0) { 
+                done = 1;
+            } 
+        }
+ 
+        # Print binary in reverse
+        prnt("Binary: ");
+        index--; 
+        whl (index >= 0) {
+            prnt(binary[index]);
+            index--;
+        }
+        prnt("\n");
+    }
+    end; 
+}

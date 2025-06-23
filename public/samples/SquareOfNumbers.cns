@@ -1,0 +1,20 @@
+mn() {
+    nt N, i;
+    nt sum = 0;
+ 
+    # Ask the user for input  
+    N = npt("Enter a positive integer N: ");   
+    
+    f (N <= 0) {  
+        prnt("Please enter a positive integer.", "\n");
+    }ls{ 
+        #Calculate sum of squares    
+        fr (i = 1; i <= N; i++) {   
+            sum += i * i;  
+        }
+ 
+        prnt("Sum of squares from 1 to", N , "is:", sum);
+    }
+
+    end; 
+}

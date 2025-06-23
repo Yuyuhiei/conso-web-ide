@@ -1,0 +1,14 @@
+mn() {
+    nt year;
+
+    # Prompt user input
+    year = npt("Enter a year: "); 
+ 
+    # Leap year logic
+    f (((year % 4 == 0) && (year % 100 != 0)) || (year % 400 == 0)) {
+        prnt(year, "is a leap year.\n");  
+    }ls {
+        prnt(year, "is not a leap year.\n" ); 
+    }
+    end;  
+}
