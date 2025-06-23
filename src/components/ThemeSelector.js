@@ -1,44 +1,12 @@
 import React from 'react';
+import { themes } from '../utils/themes'; // Import themes
 
-// Define themes with previews
+// Define themes with previews -- This array is now imported from ../utils/themes
+/*
 const themes = [
-  { 
-    id: 'conso-dark', 
-    name: 'Dark (Default)', 
-    colors: {
-      background: '#1E1E1E',
-      text: '#D4D4D4',
-      accent: '#0E639C'
-    } 
-  },
-  { 
-    id: 'conso-light', 
-    name: 'Light', 
-    colors: {
-      background: '#FFFFFF',
-      text: '#000000',
-      accent: '#1976D2'
-    } 
-  },
-  { 
-    id: 'conso-monokai', 
-    name: 'Monokai', 
-    colors: {
-      background: '#272822',
-      text: '#F8F8F2',
-      accent: '#A6E22E'
-    } 
-  },
-  { 
-    id: 'conso-dracula', 
-    name: 'Dracula', 
-    colors: {
-      background: '#282A36',
-      text: '#F8F8F2',
-      accent: '#BD93F9'
-    } 
-  }
+...
 ];
+*/
 
 const ThemeSelector = ({ currentTheme, onThemeChange }) => {
   return (

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { configureConsoLanguage } from '../utils/consoLanguageConfig';
+import { registerMonacoThemes } from '../utils/themes'; // Import theme registration
 
 const CodeEditor = ({ 
   value, 
@@ -16,6 +17,9 @@ const CodeEditor = ({
     editorRef.current = editor;
     monacoRef.current = monaco;
     
+    // Register custom themes
+    registerMonacoThemes(monaco);
+
     // Configure the Conso language
     configureConsoLanguage(monaco);
     
@@ -62,7 +66,7 @@ const CodeEditor = ({
         defaultValue={value}
         onChange={onChange}
         onMount={handleEditorDidMount}
-        theme={theme}
+        theme={'vs-dark'} // Use a built-in dark theme initially to prevent light flash
         options={{
           selectOnLineNumbers: true,
           roundedSelection: false,

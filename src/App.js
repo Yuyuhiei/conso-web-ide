@@ -338,7 +338,7 @@ const MainApp = () => {
    };
   const handleThemeChange = (themeId) => setCurrentTheme(themeId);
 
-  // --- Terminal Panel Resize Handlers ---
+  // --- Terminal Panel ResizeHandlers ---
   const handleMouseDownOnTerminalResizer = (e) => {
     isResizingTerminalPanelRef.current = true;
     terminalResizerLastYRef.current = e.clientY;
@@ -371,7 +371,7 @@ const MainApp = () => {
 
   // --- Render ---
   return (
-    <div className="app-container" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div className="app-container" data-theme={currentTheme} style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       {/* Header */}
       <header className="app-header" style={{ display: 'flex', alignItems: 'center', backgroundColor: '#252526', padding: '0 10px', borderBottom: '1px solid #333', flexShrink: 0 }}>
         {/* Logo and Title */}
