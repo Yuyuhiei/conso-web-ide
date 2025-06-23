@@ -67,7 +67,7 @@ run_sessions: Dict[str, str] = {}
 print("Run sessions dictionary initialized.")
 
 # Global dictionary to track running processes by their run_id
-running_processes = {}
+running_processes: Dict[str, subprocess.Popen] = {}
 
 # --- Request/Response Models ---
 class CodeRequest(BaseModel):
@@ -367,6 +367,10 @@ async def websocket_run_endpoint(websocket: WebSocket, run_id: str):
         )
         print(f"[/ws/run/{run_id}] Started C process (PID: {process.pid})")
 
+        # --- FIX: Register the running process so it can be stopped ---
+        running_processes[run_id] = process
+        # --- END FIX ---
+
         # --- forward_stream reads chunks ---
         async def forward_stream(stream, stream_name, ws):
             """Reads chunks from the stream and forwards them over WebSocket."""
@@ -541,11 +545,16 @@ async def websocket_run_endpoint(websocket: WebSocket, run_id: str):
              try: await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
              except Exception as ws_close_e: print(f"[/ws/run/{run_id}] Error closing WebSocket: {ws_close_e}")
 
-        # Clean up temp directory
+        # --- FIX: Clean up process and session tracking ---
         executable_dir = os.path.dirname(executable_path) if executable_path else None
+        if run_id in running_processes:
+            print(f"[/ws/run/{run_id}] Removing process from tracking.")
+            del running_processes[run_id]
         if run_id in run_sessions:
             print(f"[/ws/run/{run_id}] Removing session entry.")
             del run_sessions[run_id]
+        # --- END FIX ---
+        
         if executable_dir and os.path.exists(executable_dir):
             try:
                 shutil.rmtree(executable_dir)
@@ -559,18 +568,32 @@ async def websocket_run_endpoint(websocket: WebSocket, run_id: str):
 async def health_check():
     return {"status": "healthy", "message": "Conso Language Server is running"}
 
+# --- REVISED Stop Run Endpoint ---
 @app.post("/api/run/{run_id}/stop")
 async def stop_run(run_id: str):
-    """API endpoint to stop a running process by its ID."""
+    """API endpoint to find and terminate a running process by its ID."""
+    print(f"--- [/api/run/{run_id}/stop] Received stop request ---")
+    
     process = running_processes.get(run_id)
-    if process and process.returncode is None:
-        print(f"Termination requested for process {process.pid} with run_id {run_id}")
-        process.terminate()
-        return {"message": f"Stop signal sent to process for run ID {run_id}."}
-    elif process:
-        return {"message": "Process has already terminated."}
+
+    if not process:
+        print(f"[/api/run/{run_id}/stop] Error: No process found for this run ID.")
+        raise HTTPException(status_code=404, detail=f"No running process found for run ID: {run_id}")
+
+    # poll() returns None if the process is still running.
+    if process.poll() is None:
+        print(f"[/api/run/{run_id}/stop] Process {process.pid} is running. Sending terminate signal...")
+        try:
+            process.terminate()
+            # The websocket handler will detect the process exit and manage cleanup.
+            return {"message": f"Stop signal sent to process for run ID {run_id}."}
+        except Exception as e:
+            print(f"[/api/run/{run_id}/stop] Exception while terminating process {process.pid}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to terminate process: {e}")
     else:
-        raise HTTPException(status_code=404, detail="No running process found for this run ID.")
+        print(f"[/api/run/{run_id}/stop] Process {process.pid} has already terminated.")
+        return {"message": "Process has already terminated."}
+
 
 # --- Run Server ---
 if __name__ == "__main__":

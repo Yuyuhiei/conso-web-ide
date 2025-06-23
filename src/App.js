@@ -207,22 +207,38 @@ const MainApp = () => {
     }
   };
 
+  // --- NEW: Add this complete handleStop function ---
   const handleStop = async () => {
-    if (!isRunning || !currentRunId) return;
+    // This log should appear in your browser's console immediately on click.
+    console.log('--- Stop Button Clicked ---');
+
+    if (!isRunning || !currentRunId) {
+      console.error('Stop clicked, but state is invalid.', { isRunning, currentRunId });
+      return;
+    }
+
+    console.log(`Sending stop request for runId: ${currentRunId}`);
+    setExecutionStatus(createStatus("Sending stop signal...", STATUS_TYPE.INFO));
 
     try {
-      const response = await fetch(`/api/run/${currentRunId}/stop`, {
+      // Using the full URL to be explicit.
+      const response = await fetch(`http://localhost:5000/api/run/${currentRunId}/stop`, {
         method: 'POST',
       });
+
+      const result = await response.json();
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to stop process.');
+        console.error('Stop request failed. Server response:', result);
+        setExecutionStatus(createStatus(`Stop failed: ${result.detail}`, STATUS_TYPE.ERROR));
+        return;
       }
-      // The UI will update fully when the onProcessExit callback is triggered.
-      // We can set an intermediate status here for responsiveness.
-      setExecutionStatus(createStatus("Stopping...", STATUS_TYPE.INFO));
+
+      console.log('Stop signal acknowledged by server:', result.message);
+      // The UI will update fully once the WebSocket closes and onProcessExit is called.
+      
     } catch (error) {
-      console.error("Error sending stop signal:", error);
+      console.error('A network or other error occurred while sending the stop signal:', error);
       setExecutionStatus(createStatus(`Stop failed: ${error.message}`, STATUS_TYPE.ERROR));
     }
   };
