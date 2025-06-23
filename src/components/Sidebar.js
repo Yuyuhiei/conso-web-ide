@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import FileExplorer from './FileExplorer';
 import ThemeSelector from './ThemeSelector';
-import { VscFiles, VscColorMode, VscBook, VscBeaker } from 'react-icons/vsc';
+import ConsoChatbot from './ConsoChatbot'; // Import the new component
+import { VscFiles, VscColorMode, VscBook, VscBeaker, VscCommentDiscussion } from 'react-icons/vsc'; // Add new icon
 import './Sidebar.css';
 
 const Sidebar = ({
@@ -23,9 +24,10 @@ const Sidebar = ({
   const resizeHandleRef = useRef(null);
   
   const [expandedSections, setExpandedSections] = useState({
-    files: true,
-    samples: true,
-    themes: false
+    files: false,
+    samples: false,
+    themes: false,
+    chatbot: false
   });
 
   const [sampleFiles, setSampleFiles] = useState([]); // State to hold sample filenames
@@ -158,6 +160,19 @@ const Sidebar = ({
         <a href="/Conso_PL.pdf" target="_blank" rel="noopener noreferrer" className="sidebar-section-header">
           <div className="section-title-container"><VscBook /><span>DOCUMENTATION</span></div>
         </a>
+      </div>
+
+      {/* Chatbot Section */}
+      <div className="sidebar-section">
+        <div className="sidebar-section-header" onClick={() => toggleSection('chatbot')}>
+          <div className="section-title-container"><VscCommentDiscussion /><span>CONSO-BOT</span></div>
+          <span className={`section-toggle-icon ${expandedSections.chatbot ? 'expanded' : ''}`}>▶</span>
+        </div>
+        {expandedSections.chatbot && (
+          <div className="sidebar-section-content">
+            <ConsoChatbot />
+          </div>
+        )}
       </div>
     </div>
   );

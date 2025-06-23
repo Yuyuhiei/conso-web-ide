@@ -79,3 +79,22 @@
     transform: translateY(0);
   }
 }
+
+/* Custom Scrollbar Styling for the Sidebar */
+.sidebar::-webkit-scrollbar {
+  width: 8px; /* Width of the entire scrollbar */
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: transparent; /* Make the track invisible */
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background-color: var(--vscode-scrollbarSlider-background); /* Use VS Code's scrollbar color */
+  border-radius: 4px; /* Round the corners of the scrollbar thumb */
+  border: 2px solid var(--vscode-sideBar-background); /* Create padding around thumb */
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background-color: var(--vscode-scrollbarSlider-hoverBackground); /* Color on hover */
+}
