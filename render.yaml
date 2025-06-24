@@ -42,14 +42,8 @@ services:
     staticPublishPath: ./build # The directory where the built static files are located
     envVars:
       - key: REACT_APP_RAG_API_URL
-        fromService:
-          type: web
-          name: conso-backend-v2
-          envVarKey: URL
+        value: https://conso-backend-v2.onrender.com
       - key: REACT_APP_API_URL
-        fromService:
-          type: web
-          name: conso-python-api-v2
-          envVarKey: URL
+        value: https://conso-python-api-v2.onrender.com
       - key: REACT_APP_WEBSOCKET_URL
         value: wss://conso-websocket-v2.onrender.com
