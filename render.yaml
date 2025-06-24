@@ -1,7 +1,7 @@
 services:
   # Backend RAG Service (Node.js)
   - type: web
-    name: conso-backend
+    name: conso-backend-v2
     env: docker
     repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
     dockerContext: ./backend
@@ -13,7 +13,7 @@ services:
 
   # Python API Service (FastAPI)
   - type: web
-    name: conso-python-api
+    name: conso-python-api-v2
     env: docker
     repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
     dockerContext: ./server
@@ -24,7 +24,7 @@ services:
 
   # WebSocket Service (Python)
   - type: web
-    name: conso-websocket
+    name: conso-websocket-v2
     env: docker
     repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
     dockerContext: ./server
@@ -35,7 +35,7 @@ services:
 
   # Frontend Service (React)
   - type: web
-    name: conso-frontend
+    name: conso-frontend-v2
     env: docker
     repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
     dockerContext: .
@@ -47,13 +47,13 @@ services:
       - key: REACT_APP_RAG_API_URL
         fromService:
           type: web
-          name: conso-backend
+          name: conso-backend-v2
           envVarKey: URL
       - key: REACT_APP_API_URL
         fromService:
           type: web
-          name: conso-python-api
+          name: conso-python-api-v2
           envVarKey: URL
       - key: REACT_APP_WEBSOCKET_URL
         # We have to construct the wss URL from the service URL
-        value: "wss://conso-websocket.onrender.com" # IMPORTANT: Replace with your websocket service URL after its first deployment
+        value: "wss://conso-websocket-v2.onrender.com" # IMPORTANT: Replace with your websocket service URL after its first deployment
