@@ -34,7 +34,7 @@ services:
     dockerCommand: "uvicorn websocket_server:app --host 0.0.0.0 --port $PORT"
 
   # Frontend Service (React) - Switched to Static Site
-  - type: static_site
+  - type: static
     name: conso-frontend-v2
     repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
     plan: free
@@ -42,17 +42,8 @@ services:
     publishPath: ./build # The directory where the built static files are located
     envVars:
       - key: REACT_APP_RAG_API_URL
-        fromService:
-          type: web
-          name: conso-backend-v2
-          property: url # Use 'property: url' for static sites
+        value: https://conso-backend-v2.onrender.com
       - key: REACT_APP_API_URL
-        fromService:
-          type: web
-          name: conso-python-api-v2
-          property: url # Use 'property: url' for static sites
+        value: https://conso-python-api-v2.onrender.com
       - key: REACT_APP_WEBSOCKET_URL
-        fromService:
-          type: web
-          name: conso-websocket-v2
-          property: url # Use 'property: url' for static sites
+        value: wss://conso-websocket-v2.onrender.com
