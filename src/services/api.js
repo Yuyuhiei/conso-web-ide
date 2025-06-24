@@ -18,9 +18,8 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api'; //
 export const prepareRun = async (code) => {
   console.log("Sending prepare run request for code:", code.substring(0, 100) + "...");
   try {
-    // Calls a new /api/run/prepare endpoint (or modified /api/run)
-    // This endpoint should NOT execute the code, just compile and set up.
-    const response = await axios.post(`${API_URL}/run/prepare`, { code }); // <-- NOTE: New endpoint name suggestion
+    // Calls the correct /api/run/prepare endpoint
+    const response = await axios.post(`${API_URL}/run/prepare`, { code });
     console.log("Prepare Run response:", response.data);
     // Expects { success: true, runId: '...', websocketUrl: '...' } on success
     // Or { success: false, phase: '...', errors: [...] } on failure
