@@ -2,6 +2,16 @@
 # Use an official Node.js image to create the build artifacts.
 FROM node:18-alpine AS build
 
+# Arguments that can be passed during the build from the Render build command
+ARG REACT_APP_API_URL
+ARG REACT_APP_WEBSOCKET_URL
+ARG REACT_APP_RAG_API_URL
+
+# Set environment variables for the build process so create-react-app can use them
+ENV REACT_APP_API_URL=$REACT_APP_API_URL
+ENV REACT_APP_WEBSOCKET_URL=$REACT_APP_WEBSOCKET_URL
+ENV REACT_APP_RAG_API_URL=$REACT_APP_RAG_API_URL
+
 # Set the working directory inside the container
 WORKDIR /app
 
