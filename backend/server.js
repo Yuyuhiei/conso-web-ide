@@ -6,7 +6,7 @@ const fs = require('fs').promises;
 const path = require('path');
 
 // --- Configuration ---
-const PORT = process.env.PORT || 3001;
+const PORT = 3001; // Use a fixed port
 const VECTOR_STORE_PATH = path.join(__dirname, 'vector-store.json');
 
 // --- Initialize Express & Gemini ---
@@ -84,7 +84,7 @@ app.post('/api/chat', async (req, res) => {
         res.json({ answer: text });
 
     } catch (error) {
-        console.error("Error processing chat:", error);
+        console.error("Error processing chat:", error); 
         res.status(500).json({ error: 'Failed to process your request.' });
     }
 });
@@ -102,8 +102,8 @@ async function startServer() {
         vectorStore = JSON.parse(data);
         console.log(`Vector store loaded with ${vectorStore.length} entries.`);
 
-        app.listen(PORT, () => {
-            console.log(`Server is running on http://localhost:${PORT}`);
+        app.listen(PORT, '0.0.0.0', () => {
+            console.log(`Server is running on http://0.0.0.0:${PORT}`);
         });
     } catch (error) {
         console.error("Failed to start server:", error);
