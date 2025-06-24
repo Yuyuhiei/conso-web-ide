@@ -40,7 +40,7 @@ services:
     plan: free
     runtime: static
     buildCommand: npm install && npm run build
-    publishPath: ./build # The directory where the built static files are located
+    staticPublishPath: ./build # The directory where the built static files are located
     envVars:
       - key: REACT_APP_RAG_API_URL
         value: https://conso-backend-v2.onrender.com
