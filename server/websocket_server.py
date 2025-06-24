@@ -2,6 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from typing import List
 import json
 import re
+import os  # Import the os module
 
 # Import your existing modules
 from lexer import Lexer
@@ -163,4 +164,7 @@ async def health_check():
 # Run the server
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("websocket_server:app", host="0.0.0.0", port=5001, reload=True)
+    # Use the PORT environment variable provided by Render, default to 5001 locally
+    port = int(os.environ.get("PORT", 5001))
+    # Bind to 0.0.0.0 to be accessible from outside the container
+    uvicorn.run("websocket_server:app", host="0.0.0.0", port=port, reload=True)
