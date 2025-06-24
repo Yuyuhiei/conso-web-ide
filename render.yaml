@@ -46,4 +46,4 @@ services:
       - key: REACT_APP_API_URL
         value: https://conso-python-api-v2.onrender.com
       - key: REACT_APP_WEBSOCKET_URL
-        value: wss://conso-websocket-v2.onrender.com
+        value: wss://conso-websocket-v2.onrender.com/ws
