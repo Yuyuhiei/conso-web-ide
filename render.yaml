@@ -1,0 +1,59 @@
+services:
+  # Backend RAG Service (Node.js)
+  - type: web
+    name: conso-backend
+    env: docker
+    repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    plan: free
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false # This tells Render to not expose the value publicly
+
+  # Python API Service (FastAPI)
+  - type: web
+    name: conso-python-api
+    env: docker
+    repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
+    dockerContext: ./server
+    dockerfilePath: ./server/Dockerfile
+    plan: free
+    # Override the Docker CMD to start the FastAPI server on the port Render provides
+    dockerCommand: "uvicorn server:app --host 0.0.0.0 --port $PORT"
+
+  # WebSocket Service (Python)
+  - type: web
+    name: conso-websocket
+    env: docker
+    repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
+    dockerContext: ./server
+    dockerfilePath: ./server/Dockerfile
+    plan: free
+    # Override the Docker CMD to start the WebSocket server
+    dockerCommand: "python websocket_server.py"
+
+  # Frontend Service (React)
+  - type: web
+    name: conso-frontend
+    env: docker
+    repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # This is the custom build command that passes the environment variables
+    buildCommand: "docker build --build-arg REACT_APP_RAG_API_URL=${REACT_APP_RAG_API_URL} --build-arg REACT_APP_API_URL=${REACT_APP_API_URL} --build-arg REACT_APP_WEBSOCKET_URL=${REACT_APP_WEBSOCKET_URL} -f Dockerfile -t conso-frontend ."
+    envVars:
+      - key: REACT_APP_RAG_API_URL
+        fromService:
+          type: web
+          name: conso-backend
+          envVarKey: URL
+      - key: REACT_APP_API_URL
+        fromService:
+          type: web
+          name: conso-python-api
+          envVarKey: URL
+      - key: REACT_APP_WEBSOCKET_URL
+        # We have to construct the wss URL from the service URL
+        value: "wss://conso-websocket.onrender.com" # IMPORTANT: Replace with your websocket service URL after its first deployment
