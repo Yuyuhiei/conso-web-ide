@@ -28,6 +28,7 @@ const ConsoChatbot = () => {
 
     try {
       const apiUrl = process.env.REACT_APP_RAG_API_URL || 'http://localhost:3001';
+      console.log("Connecting to RAG API at:", apiUrl); // Add this line for debugging
       const response = await fetch(`${apiUrl}/api/chat`, {
         method: 'POST',
         headers: {
