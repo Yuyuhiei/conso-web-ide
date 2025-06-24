@@ -37,7 +37,6 @@ services:
   - type: web
     name: conso-frontend-v2
     repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
-    plan: free
     runtime: static
     buildCommand: npm install && npm run build
     staticPublishPath: ./build # The directory where the built static files are located
