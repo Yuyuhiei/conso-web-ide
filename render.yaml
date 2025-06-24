@@ -2,7 +2,7 @@ services:
   # Backend RAG Service (Node.js)
   - type: web
     name: conso-backend-v2
-    env: docker
+    runtime: docker
     repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
     dockerContext: ./backend
     dockerfilePath: ./backend/Dockerfile
@@ -14,7 +14,7 @@ services:
   # Python API Service (FastAPI)
   - type: web
     name: conso-python-api-v2
-    env: docker
+    runtime: docker
     repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
     dockerContext: ./server
     dockerfilePath: ./server/Dockerfile
@@ -25,7 +25,7 @@ services:
   # WebSocket Service (Python)
   - type: web
     name: conso-websocket-v2
-    env: docker
+    runtime: docker
     repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
     dockerContext: ./server
     dockerfilePath: ./server/Dockerfile
@@ -43,8 +43,14 @@ services:
     staticPublishPath: ./build # The directory where the built static files are located
     envVars:
       - key: REACT_APP_RAG_API_URL
-        value: https://conso-backend-v2.onrender.com
+        fromService:
+          type: web
+          name: conso-backend-v2
+          envVarKey: URL
       - key: REACT_APP_API_URL
-        value: https://conso-python-api-v2.onrender.com
+        fromService:
+          type: web
+          name: conso-python-api-v2
+          envVarKey: URL
       - key: REACT_APP_WEBSOCKET_URL
         value: wss://conso-websocket-v2.onrender.com
