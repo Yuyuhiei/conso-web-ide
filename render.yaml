@@ -31,29 +31,28 @@ services:
     dockerfilePath: ./server/Dockerfile
     plan: free
     # Override the Docker CMD to start the WebSocket server
-    dockerCommand: "python websocket_server.py"
+    dockerCommand: "uvicorn websocket_server:app --host 0.0.0.0 --port $PORT"
 
-  # Frontend Service (React)
-  - type: web
+  # Frontend Service (React) - Switched to Static Site
+  - type: static
     name: conso-frontend-v2
-    env: docker
     repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
-    dockerContext: .
-    dockerfilePath: ./Dockerfile
     plan: free
-    # This is the custom build command that passes the environment variables
-    buildCommand: "docker build --build-arg REACT_APP_RAG_API_URL=${REACT_APP_RAG_API_URL} --build-arg REACT_APP_API_URL=${REACT_APP_API_URL} --build-arg REACT_APP_WEBSOCKET_URL=${REACT_APP_WEBSOCKET_URL} -f Dockerfile -t conso-frontend ."
+    buildCommand: npm install && npm run build
+    publishPath: ./build # The directory where the built static files are located
     envVars:
       - key: REACT_APP_RAG_API_URL
         fromService:
           type: web
           name: conso-backend-v2
-          envVarKey: URL
+          property: url # Use 'property: url' for static sites
       - key: REACT_APP_API_URL
         fromService:
           type: web
           name: conso-python-api-v2
-          envVarKey: URL
+          property: url # Use 'property: url' for static sites
       - key: REACT_APP_WEBSOCKET_URL
-        # We have to construct the wss URL from the service URL
-        value: "wss://conso-websocket-v2.onrender.com" # IMPORTANT: Replace with your websocket service URL after its first deployment
+        fromService:
+          type: web
+          name: conso-websocket-v2
+          property: url # Use 'property: url' for static sites
