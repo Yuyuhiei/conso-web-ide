@@ -2,7 +2,8 @@
 
 class WebSocketService {
   constructor(url = process.env.REACT_APP_WEBSOCKET_URL || 'ws://localhost:5001/ws') {
-    this.socket = new WebSocket(url);
+     this.url = url;
+    this.socket = null;
     this.isConnected = false;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
