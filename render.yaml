@@ -34,7 +34,7 @@ services:
     dockerCommand: "uvicorn websocket_server:app --host 0.0.0.0 --port $PORT"
 
   # Frontend Service (React) - Switched to Static Site
-  - type: static
+  - type: static_site
     name: conso-frontend-v2
     repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
     plan: free
