@@ -34,10 +34,11 @@ services:
     dockerCommand: "uvicorn websocket_server:app --host 0.0.0.0 --port $PORT"
 
   # Frontend Service (React) - Switched to Static Site
-  - type: static
+  - type: web
     name: conso-frontend-v2
     repo: https://github.com/Yuyuhiei/conso-web-ide # IMPORTANT: Replace with your GitHub repo URL
     plan: free
+    runtime: static
     buildCommand: npm install && npm run build
     publishPath: ./build # The directory where the built static files are located
     envVars:
