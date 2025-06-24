@@ -331,8 +331,9 @@ async def prepare_interactive_run(request: CodeRequest, response: Response):
     print("[/api/run/prepare] C Compilation OK.")
 
     run_sessions[run_id] = executable_path
-    ws_host = "localhost"; ws_port = 5000; ws_protocol = "ws"
-    ws_url = f"{ws_protocol}://{ws_host}:{ws_port}/ws/run/{run_id}"
+    ws_protocol = "wss"
+    ws_host = "conso-python-api-v2.onrender.com"
+    ws_url = f"{ws_protocol}://{ws_host}/ws/run/{run_id}"
     print(f"[/api/run/prepare] Run prepared. ID: {run_id}, Executable: {executable_path}, WS URL: {ws_url}")
     return PrepareRunResponse(success=True, runId=run_id, websocketUrl=ws_url, transpiledCode=transpiled_code)
 
