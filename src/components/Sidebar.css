@@ -98,3 +98,41 @@
 .sidebar::-webkit-scrollbar-thumb:hover {
   background-color: var(--vscode-scrollbarSlider-hoverBackground); /* Color on hover */
 }
+
+/* --- Tech Stack Styles --- */
+.tech-stack-container {
+  padding: 5px 15px;
+}
+
+.tech-stack-category {
+  margin-bottom: 15px;
+}
+
+.tech-stack-header {
+  font-size: 0.8em;
+  font-weight: bold;
+  color: var(--color-text-secondary);
+  margin-top: 0;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.tech-stack-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 0.9em;
+  color: var(--color-text-primary);
+}
+
+.tech-stack-icon {
+  font-size: 1.2em;
+  color: var(--color-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px; /* Ensures icons are aligned */
+}

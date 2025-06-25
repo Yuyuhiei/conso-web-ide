@@ -8,7 +8,7 @@ import Sidebar from './components/Sidebar';
 import TranspiledCodeView from './components/TranspiledCodeView';
 import { prepareRun } from './services/api';
 import websocketService from './services/websocketService';
-import { VscRunAll, VscDebugStop, VscSave, VscFolder, VscEye, VscCloudDownload, VscTrash, VscInfo } from 'react-icons/vsc';
+import { VscRunAll, VscDebugStop, VscSave, VscFolder, VscEye, VscCloudDownload, VscTrash, VscInfo, VscGithub } from 'react-icons/vsc';
 import './App.css';
 
 const STATUS_TYPE = { INFO: 'info', SUCCESS: 'success', ERROR: 'error', RUNNING: 'running', PENDING: 'pending' };
@@ -572,6 +572,24 @@ const MainApp = () => {
                <span>Save C</span>
              </button>
            </div>
+
+           {/* Spacer to push the GitHub button to the far right */}
+           <div style={{ flex: 1 }}></div>
+
+           {/* GitHub Star Button */}
+           <div className="control-group">
+                <a
+                    href="https://github.com/Yuyuhiei/conso-web-ide"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="control-button github-button"
+                    title="Star this project on GitHub!"
+                    style={{ textDecoration: 'none' }}
+                >
+                    <VscGithub />
+                    <span>Star on GitHub</span>
+                </a>
+            </div>
         </div>
       </header>
 

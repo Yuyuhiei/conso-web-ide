@@ -2,8 +2,31 @@ import React, { useState, useRef, useEffect } from 'react';
 import FileExplorer from './FileExplorer';
 import ThemeSelector from './ThemeSelector';
 import ConsoChatbot from './ConsoChatbot'; // Import the new component
-import { VscFiles, VscColorMode, VscBook, VscBeaker, VscCommentDiscussion } from 'react-icons/vsc'; // Add new icon
+import { VscFiles, VscColorMode, VscBook, VscBeaker, VscCommentDiscussion, VscTools, VscCircuitBoard } from 'react-icons/vsc'; // Add VscCircuitBoard here
+import { SiReact, SiJavascript, SiHtml5, SiCss3, SiNodedotjs, SiExpress, SiPython, SiFastapi, SiGnu, SiDocker } from 'react-icons/si'; // Tech stack icons
 import './Sidebar.css';
+
+const techStackData = {
+  "Frontend": [
+    { name: "React", icon: <SiReact /> },
+    { name: "JavaScript", icon: <SiJavascript /> },
+    { name: "HTML5", icon: <SiHtml5 /> },
+    { name: "CSS3", icon: <SiCss3 /> },
+    { name: "Monaco Editor", icon: <VscFiles /> }
+  ],
+  "Backend": [
+    { name: "Node.js", icon: <SiNodedotjs /> },
+    { name: "Express.js", icon: <SiExpress /> },
+    { name: "Python", icon: <SiPython /> },
+    { name: "FastAPI", icon: <SiFastapi /> },
+    { name: "WebSocket", icon: <VscCircuitBoard /> } // Using a generic icon for WebSocket
+  ],
+  "Compilation & Containerization": [
+    { name: "GCC", icon: <SiGnu /> },
+    { name: "Docker", icon: <SiDocker /> }
+  ]
+};
+
 
 const Sidebar = ({
   files,
@@ -27,6 +50,7 @@ const Sidebar = ({
     files: false,
     samples: false,
     themes: false,
+    techStack: false, // Add this line
     chatbot: false
   });
 
@@ -160,6 +184,29 @@ const Sidebar = ({
         <a href="/Conso_PL.pdf" target="_blank" rel="noopener noreferrer" className="sidebar-section-header">
           <div className="section-title-container"><VscBook /><span>DOCUMENTATION</span></div>
         </a>
+      </div>
+
+      {/* Tech Stack Section */}
+      <div className="sidebar-section">
+        <div className="sidebar-section-header" onClick={() => toggleSection('techStack')}>
+          <div className="section-title-container"><VscTools /><span>TECH STACK</span></div>
+          <span className={`section-toggle-icon ${expandedSections.techStack ? 'expanded' : ''}`}>▶</span>
+        </div>
+        {expandedSections.techStack && (
+          <div className="sidebar-section-content tech-stack-container">
+            {Object.entries(techStackData).map(([category, techs]) => (
+              <div key={category} className="tech-stack-category">
+                <h4 className="tech-stack-header">{category}</h4>
+                {techs.map(tech => (
+                  <div key={tech.name} className="tech-stack-item">
+                    <span className="tech-stack-icon">{tech.icon}</span>
+                    <span>{tech.name}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Chatbot Section */}

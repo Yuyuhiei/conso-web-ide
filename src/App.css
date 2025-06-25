@@ -269,6 +269,22 @@
   border-color: #555555;
 }
 
+/* --- GitHub Button Style --- */
+.github-button {
+    background-color: transparent !important; /* Override base styles */
+    border: 1px solid #555;
+    color: #ccc;
+    transition: all 0.2s ease-in-out;
+}
+
+.github-button:hover {
+    background-color: #0e639c !important;
+    border-color: #0e639c;
+    color: #fff;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
 
 
 
