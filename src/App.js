@@ -8,7 +8,7 @@ import Sidebar from './components/Sidebar';
 import TranspiledCodeView from './components/TranspiledCodeView';
 import { prepareRun } from './services/api';
 import websocketService from './services/websocketService';
-import { VscRunAll, VscDebugStop, VscSave, VscFolder, VscEye, VscCloudDownload, VscTrash } from 'react-icons/vsc';
+import { VscRunAll, VscDebugStop, VscSave, VscFolder, VscEye, VscCloudDownload, VscTrash, VscInfo } from 'react-icons/vsc';
 import './App.css';
 
 const STATUS_TYPE = { INFO: 'info', SUCCESS: 'success', ERROR: 'error', RUNNING: 'running', PENDING: 'pending' };
@@ -54,6 +54,7 @@ const MainApp = () => {
   const [showTranspiledCode, setShowTranspiledCode] = useState(false);
   const [currentRunId, setCurrentRunId] = useState(null);
   const [interactiveWsUrl, setInteractiveWsUrl] = useState(null);
+  const [showInfo, setShowInfo] = useState(false);
   const editorRef = useRef(null);
   const interactiveTerminalRef = useRef(null);
   const [currentTheme, setCurrentTheme] = useState(() => localStorage.getItem('conso-theme') || 'conso-dark');
@@ -395,6 +396,116 @@ const MainApp = () => {
   // --- End Terminal Panel Resize Handlers ---
 
   // --- Render ---
+  const renderWakeupBanner = () => (
+    <div
+      style={{
+        position: 'fixed',
+        right: 20,
+        bottom: 20,
+        zIndex: 200,
+        background: '#1e1e1e', // Changed to match terminal/theme background
+        color: '#eee',
+        borderRadius: 10,
+        boxShadow: '0 2px 12px #0008',
+        padding: '18px 24px',
+        minWidth: 340,
+        maxWidth: 420,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-end',
+        gap: 10,
+        fontSize: 15,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+        <b>Before using the IDE:</b>
+        <button
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#0af',
+            cursor: 'pointer',
+            fontSize: 18,
+            padding: 0,
+          }}
+          onClick={() => setShowInfo((v) => !v)}
+          title="Why do I need to do this?"
+        >
+          <VscInfo />
+        </button>
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <a
+          href="https://conso-backend-v2.onrender.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            background: '#0e639c',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 5,
+            padding: '8px 14px',
+            textDecoration: 'none',
+            fontWeight: 600,
+          }}
+        >
+          Wake Backend
+        </a>
+        <a
+          href="https://conso-python-api-v2.onrender.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            background: '#0e639c',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 5,
+            padding: '8px 14px',
+            textDecoration: 'none',
+            fontWeight: 600,
+          }}
+        >
+          Wake Python API
+        </a>
+        <a
+          href="https://conso-websocket-v2.onrender.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            background: '#0e639c',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 5,
+            padding: '8px 14px',
+            textDecoration: 'none',
+            fontWeight: 600,
+          }}
+        >
+          Wake WebSocket
+        </a>
+      </div>
+      {showInfo && (
+        <div
+          style={{
+            marginTop: 8,
+            background: '#181a20',
+            color: '#ccc',
+            borderRadius: 6,
+            padding: '10px 12px',
+            fontSize: 14,
+            boxShadow: '0 1px 4px #0006',
+          }}
+        >
+          <b>Why do I need to do this?</b>
+          <br />
+          This IDE is hosted on Render's free tier. When not used for a while, each backend service (API, WebSocket, and Backend) "sleeps" to save resources. The first request after sleeping can take 30–60 seconds to start. <br /><br />
+          <b>To avoid errors and delays</b>, please click each button above to open the backend services in new tabs. Wait for each to load (you should see a Render landing page or a simple message), then return here and use the IDE as normal.<br /><br />
+          <b>Note:</b> Code execution (GCC compilation) may be slow, since it runs inside a Docker container on Render's free plan.
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="app-container" data-theme={currentTheme} style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       {/* Header */}
@@ -536,6 +647,9 @@ const MainApp = () => {
             />
          </div>
       )}
+
+      {/* Wakeup Banner - NEW SECTION ADDED HERE */}
+      {renderWakeupBanner()}
     </div>
   );
 };
